@@ -261,6 +261,7 @@ public class DisplayModeDirector {
         synchronized (mLock) {
             // We may have a listener already registered before the call to start, so go ahead and
             // notify them to pick up our newly initialized state.
+            mSettingsObserver.updateRefreshRateSettingLocked();
             notifyDesiredDisplayModeSpecsChangedLocked();
         }
     }
@@ -588,6 +589,13 @@ public class DisplayModeDirector {
         if (vrrSupported) {
             mSystemRequestObserver.requestDisplayModes(token, displayId, modeIds);
         }
+    }
+
+    /**
+     * Delegates requestMaxRefreshRate call to SystemRequestObserver
+     */
+    public void requestMaxRefreshRate(IBinder token, int displayId, float maxRefreshRate) {
+        mSystemRequestObserver.requestMaxRefreshRate(token, displayId, maxRefreshRate);
     }
 
     /**

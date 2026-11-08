@@ -304,17 +304,14 @@ public class NotificationShadeWindowControllerImpl
         }
     }
 
-    private boolean shouldEnableKeyguardScreenRotation() {
-        boolean enableAccelerometerRotation =
-                Settings.System.getInt(mContext.getContentResolver(),
-                Settings.System.ACCELEROMETER_ROTATION, 0) != 0;
+    private boolean shouldUseKeyguardUserOrientation() {
         boolean enableLockScreenRotation =
                 LineageSettings.System.getInt(mContext.getContentResolver(),
                 LineageSettings.System.LOCKSCREEN_ROTATION,
                 mContext.getResources().getBoolean(org.lineageos.platform.internal.R.bool.
                         config_lockScreenRotationEnabledByDefault) ? 1 : 0) != 0;
         return mKeyguardStateController.isKeyguardScreenRotationAllowed()
-                && (enableLockScreenRotation && enableAccelerometerRotation);
+                && enableLockScreenRotation;
     }
 
     /** Adds the notification shade view to the window manager. */
@@ -533,7 +530,7 @@ public class NotificationShadeWindowControllerImpl
         if (state.bouncerShowing
                 || (state.isKeyguardShowingAndNotOccluded() && !dreamShowingAndRotationAllowed)
                 || state.dozing) {
-            if (shouldEnableKeyguardScreenRotation()) {
+            if (shouldUseKeyguardUserOrientation()) {
                 mLpChanged.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_USER;
             } else {
                 mLpChanged.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_NOSENSOR;

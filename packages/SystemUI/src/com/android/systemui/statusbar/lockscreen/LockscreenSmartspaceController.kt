@@ -31,9 +31,12 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Handler
 import android.os.UserHandle
+import android.provider.Settings
 import android.provider.Settings.Secure.LOCK_SCREEN_ALLOW_PRIVATE_NOTIFICATIONS
 import android.provider.Settings.Secure.LOCK_SCREEN_SHOW_NOTIFICATIONS
-import android.provider.Settings.Secure.LOCK_SCREEN_WEATHER_ENABLED
+import android.provider.Settings.Secure.LOCKSCREEN_SMARTSPACE_ENABLED
+import android.provider.Settings.System.LOCKSCREEN_WEATHER_ENABLED
+import android.provider.Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN
 import android.util.Log
 import android.view.ContextThemeWrapper
 import android.view.View
@@ -75,6 +78,7 @@ import com.android.systemui.util.asIndenting
 import com.android.systemui.util.concurrency.Execution
 import com.android.systemui.util.printCollection
 import com.android.systemui.util.settings.SecureSettings
+import com.android.systemui.util.settings.SystemSettings
 import com.android.systemui.util.time.SystemClock
 import java.io.PrintWriter
 import java.time.Instant
@@ -96,6 +100,7 @@ constructor(
     private val falsingManager: FalsingManager,
     private val systemClock: SystemClock,
     private val secureSettings: SecureSettings,
+    private val systemSettings: SystemSettings,
     private val userTracker: UserTracker,
     private val sysuiColorExtractor: SysuiColorExtractor,
     @ShadeDisplayAware private val configurationController: ConfigurationController,
@@ -138,10 +143,12 @@ constructor(
 
     private val regionSamplingEnabled = featureFlags.isEnabled(Flags.REGION_SAMPLING)
     private var showNotifications = false
+    private var showMediaControls = false
     private var showSensitiveContentForCurrentUser = false
     private var showSensitiveContentForManagedUser = false
     private var managedUserHandle: UserHandle? = null
     private var mSplitShadeEnabled = false
+    private var storedMediaTarget: SmartspaceTarget? = null
     var mediaTarget: SmartspaceTarget? = null
         private set
 
@@ -317,15 +324,35 @@ constructor(
         dumpManager.registerDumpable(this)
     }
 
-    val isEnabled: Boolean = plugin != null
+    val isCustomClockEnabled: Boolean
+        get() {
+            val customClock =
+                secureSettings.getIntForUser(Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE, 0, userTracker.userId) !=
+                    0
+            return customClock
+        }
 
     val isWeatherEnabled: Boolean
         get() {
             val showWeather =
-                secureSettings.getIntForUser(LOCK_SCREEN_WEATHER_ENABLED, 1, userTracker.userId) ==
+                secureSettings.getIntForUser(LOCKSCREEN_SMARTSPACE_ENABLED, 1, userTracker.userId) ==
                     1
-            return showWeather
+            return showWeather && !isCustomClockEnabled
         }
+
+    val isOmniWeatherEnabled: Boolean
+        get() {
+            val showCustomWeather =
+                systemSettings.getIntForUser(
+                    LOCKSCREEN_WEATHER_ENABLED,
+                    0,
+                    userTracker.userId,
+                ) == 1
+            return showCustomWeather && !isWeatherEnabled && !isCustomClockEnabled
+        }
+
+    val isEnabled: Boolean
+        get() = plugin != null && isWeatherEnabled
 
     private fun updateBypassEnabled() {
         val bypassEnabled = bypassController.bypassEnabled
@@ -511,6 +538,12 @@ constructor(
             settingsObserver,
             UserHandle.USER_ALL,
         )
+        secureSettings.registerContentObserverForUserAsync(
+            secureSettings.getUriFor(MEDIA_CONTROLS_LOCK_SCREEN),
+            true,
+            settingsObserver,
+            UserHandle.USER_ALL,
+        )
         sysuiColorExtractor.addOnColorsChangedListener(onColorsChangedListener)
         configurationController.addCallback(configChangeListener)
         statusBarStateController.addCallback(statusBarStateListener)
@@ -536,8 +569,14 @@ constructor(
     }
 
     fun setMediaTarget(target: SmartspaceTarget?) {
-        mediaTarget = target
-        smartspaceViews.forEach { it.setMediaTarget(target) }
+        storedMediaTarget = target
+        updateMediaTarget()
+    }
+
+    private fun updateMediaTarget() {
+        val filteredTarget = if (showMediaControls) storedMediaTarget else null
+        mediaTarget = filteredTarget
+        smartspaceViews.forEach { it.setMediaTarget(filteredTarget) }
     }
 
     /** Disconnects the smartspace view from the smartspace service and cleans up any resources. */
@@ -676,6 +715,9 @@ constructor(
         showNotifications =
             secureSettings.getIntForUser(LOCK_SCREEN_SHOW_NOTIFICATIONS, 0, userTracker.userId) == 1
 
+        showMediaControls =
+            secureSettings.getBoolForUser(MEDIA_CONTROLS_LOCK_SCREEN, true, userTracker.userId)
+
         showSensitiveContentForCurrentUser =
             secureSettings.getIntForUser(
                 LOCK_SCREEN_ALLOW_PRIVATE_NOTIFICATIONS,
@@ -694,6 +736,8 @@ constructor(
                 ) == 1
         }
 
+        // Update the media target in case media controls setting changes.
+        updateMediaTarget()
         session?.requestSmartspaceUpdate()
     }
 

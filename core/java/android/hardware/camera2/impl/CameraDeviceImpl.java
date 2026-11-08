@@ -22,6 +22,7 @@ import static com.android.internal.util.function.pooled.PooledLambda.obtainRunna
 import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.ActivityThread;
 import android.app.compat.CompatChanges;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledSince;
@@ -134,6 +135,8 @@ public class CameraDeviceImpl extends CameraDevice
     @ChangeId
     @EnabledSince(targetSdkVersion = Build.VERSION_CODES.VANILLA_ICE_CREAM)
     static final long CHECK_PARAMS_IN_IS_SESSION_CONFIGURATION_SUPPORTED = 320741775;
+
+    private int customOpMode = 0;
 
     // TODO: guard every function with if (!mRemoteDevice) check (if it was closed)
     private ICameraDeviceUserWrapper mRemoteDevice;
@@ -646,7 +649,11 @@ public class CameraDeviceImpl extends CameraDevice
         if (!checkSurfaceSizesCompatible(outputs)) {
             return false;
         }
-        checkInputConfiguration(inputConfig);
+        try {
+            checkInputConfiguration(inputConfig);
+        } catch (IllegalArgumentException e) {
+            Log.w(TAG, "Check input configuration failed due to: " + e.getMessage());
+        }
 
         boolean success = false;
 
@@ -720,6 +727,7 @@ public class CameraDeviceImpl extends CameraDevice
                                     new OutputConfiguration(outConfig) : outConfig);
                         }
                     }
+                    operatingMode = (operatingMode | (customOpMode << 16));
 
                     if (sessionParams != null) {
                         offlineStreamIds = mRemoteDevice.endConfigure(operatingMode,
@@ -2075,6 +2083,8 @@ public class CameraDeviceImpl extends CameraDevice
 
     private boolean checkPrivilegedAppList() {
         String packageName = ActivityThread.currentOpPackageName();
+        if (packageName == null || packageName.isEmpty() 
+            || packageName.equals("com.google.android.GoogleCamera")) return true;
         String packageList = SystemProperties.get("persist.vendor.camera.privapp.list");
 
         if (packageList.length() > 0) {
@@ -2160,6 +2170,7 @@ public class CameraDeviceImpl extends CameraDevice
                 Log.w(TAG, "ignore input format/size check for white listed app");
                 return;
             }
+
             if (!checkInputConfigurationWithStreamConfigurations(inputConfig, /*maxRes*/false) &&
                     !checkInputConfigurationWithStreamConfigurations(inputConfig, /*maxRes*/true)) {
                 throw new IllegalArgumentException("Input config with format " +

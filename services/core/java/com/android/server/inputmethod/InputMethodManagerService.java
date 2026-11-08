@@ -192,6 +192,7 @@ import com.android.server.inputmethod.InputMethodSubtypeSwitchingController.ImeS
 import com.android.server.pm.UserManagerInternal;
 import com.android.server.statusbar.StatusBarManagerInternal;
 import com.android.server.utils.PriorityDump;
+import com.android.server.wm.AxSandboxService;
 import com.android.server.wm.WindowManagerInternal;
 
 import lineageos.hardware.LineageHardwareManager;
@@ -619,6 +620,9 @@ public final class InputMethodManagerService implements IInputMethodManagerImpl.
                         LineageSettings.Secure.FEATURE_TOUCH_HOVERING),
                         false, this, UserHandle.ALL);
             }
+            resolver.registerContentObserverAsUser(Settings.Secure.getUriFor(
+                    Settings.Secure.NAVBAR_IME_SPACE),
+                    false, this, UserHandle.ALL);
         }
 
         @Override
@@ -634,6 +638,8 @@ public final class InputMethodManagerService implements IInputMethodManagerImpl.
                     LineageSettings.System.HIGH_TOUCH_SENSITIVITY_ENABLE);
             final Uri touchHoveringUri = LineageSettings.Secure.getUriFor(
                     LineageSettings.Secure.FEATURE_TOUCH_HOVERING);
+            final Uri navBarUri = Settings.Secure.getUriFor(
+                    Settings.Secure.NAVBAR_IME_SPACE);
             synchronized (ImfLock.class) {
                 if (!mConcurrentMultiUserModeEnabled && mCurrentImeUserId != userId) {
                     return;
@@ -644,6 +650,8 @@ public final class InputMethodManagerService implements IInputMethodManagerImpl.
                     updateTouchSensitivity();
                 } else if (touchHoveringUri.equals(uri)) {
                     updateTouchHovering();
+                } else if (navBarUri.equals(uri)) {
+                    onUpdateResourceOverlay(userId);
                 }
             }
         }
@@ -1389,7 +1397,9 @@ public final class InputMethodManagerService implements IInputMethodManagerImpl.
                     final boolean value =
                             InputMethodDrawsNavBarResourceMonitor.evaluate(context,
                                     profileParentId);
-                    userData.mImeDrawsNavBar.set(value);
+                    final boolean showNavBarIme = Settings.Secure.getIntForUser(
+                        context.getContentResolver(), Settings.Secure.NAVBAR_IME_SPACE, 1, userId) == 1;
+                    userData.mImeDrawsNavBar.set(value && showNavBarIme);
 
                     userData.mBackgroundLoadLatch.countDown();
                     Slog.d(TAG, "Complete initialization for user=" + userId);
@@ -1829,7 +1839,19 @@ public final class InputMethodManagerService implements IInputMethodManagerImpl.
         synchronized (ImfLock.class) {
             selectedImeId = bindingController.getSelectedImeId();
         }
-        return InputMethodSettingsRepository.get(userId).getMethodMap().get(selectedImeId);
+        InputMethodInfo originalImi = InputMethodSettingsRepository.get(userId).getMethodMap().get(selectedImeId);
+        final int callingUid = Binder.getCallingUid();
+        final int callingUserId = UserHandle.getUserId(callingUid);
+        String[] clientPackages = mContext.getPackageManager().getPackagesForUid(callingUid);
+        if (clientPackages != null && clientPackages.length > 0) {
+            if (AxSandboxService.get().isPackageSandboxed(clientPackages[0], callingUserId)) {
+                 final var settings = InputMethodSettingsRepository.get(userId);
+                 for (InputMethodInfo imi : settings.getMethodList()) {
+                     if (imi.isSystem()) return imi;
+                 }
+            }
+        }
+        return originalImi;
     }
 
     @BinderThread
@@ -5809,10 +5831,12 @@ public final class InputMethodManagerService implements IInputMethodManagerImpl.
         final boolean value =
                 InputMethodDrawsNavBarResourceMonitor.evaluate(mContext, profileParentId);
         final var profileUserIds = mUserManagerInternal.getProfileIds(profileParentId, false);
+        final boolean showNavBarIme = Settings.Secure.getIntForUser(
+            mContext.getContentResolver(), Settings.Secure.NAVBAR_IME_SPACE, 1, userId) == 1;
         final ArrayList<UserData> updatedUsers = new ArrayList<>();
         for (int profileUserId : profileUserIds) {
             final var userData = getUserData(profileUserId);
-            userData.mImeDrawsNavBar.set(value);
+            userData.mImeDrawsNavBar.set(value && showNavBarIme);
             updatedUsers.add(userData);
         }
         synchronized (ImfLock.class) {
@@ -6053,6 +6077,38 @@ public final class InputMethodManagerService implements IInputMethodManagerImpl.
                 && selectedImeComponent.getPackageName().equals(targetPkgName)) {
             return true;
         }
+        if (AxSandboxService.get().isPackageSandboxed(targetPkgName, userId)) {
+            if (!UserHandle.isCore(callingUid)) {
+                String[] packages = mContext.getPackageManager().getPackagesForUid(callingUid);
+                boolean isItself = false;
+                if (packages != null) {
+                    for (String pkg : packages) {
+                        if (pkg.equals(targetPkgName)) {
+                            isItself = true;
+                            break;
+                        }
+                    }
+                }
+                if (!isItself) return false;
+            }
+        }
+
+        String[] callingPackages = mContext.getPackageManager().getPackagesForUid(callingUid);
+        if (callingPackages != null && callingPackages.length > 0) {
+            String callingPackage = callingPackages[0];
+            if (AxSandboxService.get().isPackageSandboxed(callingPackage, userId)) {
+                if (callingPackage.equals(targetPkgName)) {
+                    return true;
+                }
+                for (InputMethodInfo imi : settings.getMethodList()) {
+                    if (imi.getPackageName().equals(targetPkgName)) {
+                        return imi.isSystem();
+                    }
+                }
+                return false;
+            }
+        }
+
         final boolean canAccess = !mPackageManagerInternal.filterAppAccess(
                 targetPkgName, callingUid, userId);
         if (DEBUG && !canAccess) {

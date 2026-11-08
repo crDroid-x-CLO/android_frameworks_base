@@ -137,6 +137,7 @@ java_library_static {
         ":android.hardware.tv.hdmi.connection-V1-java-source",
         ":android.hardware.tv.hdmi.earc-V1-java-source",
         ":android.hardware.tv.mediaquality-V2-java-source",
+        ":ax_sandbox_server_sources",
         ":statslog-art-java-gen",
         ":statslog-contexthub-java-gen",
         ":statslog-crashrecovery-java-gen",
@@ -155,6 +156,7 @@ java_library_static {
         ":device-state-config",
         ":memory-limiter-config",
         ":services-sources-telecom",
+        ":lmofreeform-display-adapter-java",
         "java/com/android/server/EventLogTags.logtags",
         "java/com/android/server/am/EventLogTags.logtags",
         "java/com/android/server/wm/EventLogTags.logtags",
@@ -279,6 +281,7 @@ java_library_static {
         "trust_token",
         "ambientcontext_flags_lib",
         "vendor.aac.hardware.richtap.vibrator-V2-java",
+        "vendor.aospa.biometrics.face",
     ],
     javac_shard_size: 50,
     javacflags: [

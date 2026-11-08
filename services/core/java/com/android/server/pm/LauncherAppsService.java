@@ -132,6 +132,7 @@ import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.ArchiveState;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.wm.ActivityTaskManagerInternal;
+import com.android.server.wm.AxSandboxService;
 
 import java.io.DataInputStream;
 import java.io.FileDescriptor;
@@ -440,7 +441,8 @@ public class LauncherAppsService extends SystemService {
             final long token = Binder.clearCallingIdentity();
             try {
                 for (int userId : userIds) {
-                    sessionInfos.addAll(getPackageInstallerService().getAllSessions(userId)
+                    sessionInfos.addAll(getPackageInstallerService()
+                            .getAllSessions(userId, callingUid)
                             .getList());
                 }
             } finally {
@@ -1044,6 +1046,22 @@ public class LauncherAppsService extends SystemService {
                     callingUid, user.getIdentifier());
             final int numResolveInfos = apps.size();
             List<LauncherActivityInfoInternal> results = new ArrayList<>();
+
+            String callingPackage = mActivityManagerInternal.getPackageNameByPid(Binder.getCallingPid());
+            boolean isCallerSandboxApp = callingPackage != null
+                && callingPackage.contains(AxSandboxService.SANDBOX_PACKAGE);
+
+            List<String> hiddenPkgs = Collections.emptyList();
+            List<String> launcherHiddenPkgs = Collections.emptyList();
+            if (!isCallerSandboxApp) {
+                try {
+                    hiddenPkgs = AxSandboxService.get().getHiddenPackages(user.getIdentifier());
+                    launcherHiddenPkgs = AxSandboxService.get().getHiddenFromLauncherPackages(user.getIdentifier());
+                } catch (Exception e) {
+                    Slog.e(TAG, "Failed to retrieve hidden package lists from AxSandboxService", e);
+                }
+            }
+
             for (int i = 0; i < numResolveInfos; i++) {
                 final ResolveInfo ri = apps.get(i);
                 final String packageName = ri.activityInfo.packageName;
@@ -1051,6 +1069,12 @@ public class LauncherAppsService extends SystemService {
                     // should not happen
                     continue;
                 }
+
+                if (!isCallerSandboxApp && (hiddenPkgs.contains(packageName)
+                        || launcherHiddenPkgs.contains(packageName))) {
+                    continue;
+                }
+
                 final IncrementalStatesInfo incrementalStatesInfo =
                         mPackageManagerInternal.getIncrementalStatesInfo(packageName, callingUid,
                                 user.getIdentifier());
@@ -1866,6 +1890,12 @@ public class LauncherAppsService extends SystemService {
         @Nullable
         private IntentSender buildIntentSenderForUser(
                 @NonNull Intent intent, @NonNull UserHandle user) {
+            // Only allow foreground apps to start background activities with this PendingIntent.
+            Bundle options = ActivityOptions.makeBasic()
+                    .setPendingIntentCreatorBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE)
+                    .toBundle();
+
             final PendingIntent pi =
                     PendingIntent.getActivityAsUser(
                             mContext,
@@ -1873,7 +1903,7 @@ public class LauncherAppsService extends SystemService {
                             intent,
                             PendingIntent.FLAG_IMMUTABLE
                                     | FLAG_UPDATE_CURRENT,
-                            /* options */ null,
+                            options,
                             user);
             return pi == null ? null : pi.getIntentSender();
         }

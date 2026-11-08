@@ -369,6 +369,16 @@
 
     <uses-permission android:name="android.permission.BIND_APPWIDGET" />
 
+    <!-- Smartspace -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY"/>
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL"/>
+    <permission android:name="com.android.systemui.permission.SEND_ALERT_BROADCASTS" android:protectionLevel="preinstalled|signature"/>
+    <uses-permission android:name="com.google.android.deskclock.permission.RECEIVE_ALERT_BROADCASTS"/>
+    <uses-permission android:name="com.google.android.apps.nexuslauncher.permission.QSB"/>
+    <protected-broadcast android:name="com.google.android.systemui.smartspace.CLICK_EVENT"/>
+    <protected-broadcast android:name="com.google.android.systemui.smartspace.ENABLE_UPDATE"/>
+    <protected-broadcast android:name="com.google.android.systemui.smartspace.EXPIRE_EVENT"/>
+
     <!-- For clipboard overlay -->
     <uses-permission android:name="android.permission.READ_CLIPBOARD_IN_BACKGROUND" />
     <uses-permission android:name="android.permission.SET_CLIP_SOURCE" />
@@ -429,11 +439,34 @@
     <uses-permission android:name="android.permission.REPORT_UI_LATENCY_STATS"
         android:featureFlag="com.android.server.ui_latency_stats.ui_latency_stats_service" />
 
+    <!-- OmniJaws -->
+    <uses-permission android:name="org.omnirom.omnijaws.READ_WEATHER" />
+
+    <!-- OnTheGo -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+    <!-- Kill button in notification guts -->
+    <uses-permission android:name="android.permission.FORCE_STOP_PACKAGES" />
+
+    <!-- DataSwitch tile -->
+    <uses-permission android:name="android.permission.WRITE_APN_SETTINGS" />
+
     <protected-broadcast android:name="com.android.settingslib.action.REGISTER_SLICE_RECEIVER" />
     <protected-broadcast android:name="com.android.settingslib.action.UNREGISTER_SLICE_RECEIVER" />
     <protected-broadcast android:name="com.android.settings.flashlight.action.FLASHLIGHT_CHANGED" />
     <protected-broadcast android:name="com.android.systemui.action.LAUNCH_SYSTEM_MEDIA_OUTPUT_DIALOG" />
     <protected-broadcast android:name="com.android.systemui.STARTED" />
+    <protected-broadcast android:name="com.android.systemui.doze.pulse" />
+
+    <!-- Ambient Indication -->
+    <permission
+        android:name="com.google.android.ambientindication.permission.AMBIENT_INDICATION"
+        android:protectionLevel="system|signature" />
+    <uses-permission android:name="com.google.android.ambientindication.permission.AMBIENT_INDICATION" />
+
+    <permission
+        android:name="com.google.android.systemui.permission.WIRELESS_CHARGER_STATUS"
+        android:protectionLevel="system|signature" />
 
     <application
         android:name=".application.impl.SystemUIApplicationImpl"
@@ -463,6 +496,13 @@
         <service android:name="SystemUIService"
             android:exported="true"
         />
+        <service
+            android:name=".ax.AxPlatformBinderService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.android.systemui.action.AX_PLATFORM" />
+            </intent-filter>
+        </service>
         <service android:name=".wallet.controller.WalletContextualLocationsService"
             android:exported="true"
             />
@@ -472,6 +512,10 @@
              android:exported="false"
              android:permission="com.android.systemui.permission.SELF"
         />
+
+        <service
+            android:name="com.google.android.systemui.power.batteryevent.domain.BatteryEventService"
+            android:exported="true" />
 
         <!-- On user switch, this service is started to ensure that the associated SystemUI
              process for the current user is started. See the resource
@@ -595,12 +639,30 @@
         <service android:name=".recordissue.IssueRecordingServiceLegacy"
                 android:foregroundServiceType="systemExempted"/>
 
+        <!-- started from PhoneWindowManager -->
+        <service
+            android:name=".crdroid.onthego.OnTheGoService"
+            android:foregroundServiceType="camera"
+            android:exported="true" />
+
         <receiver android:name=".SysuiRestartReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.android.systemui.action.RESTART" />
 
                 <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
+        <service android:name="com.android.systemui.CPUInfoService"
+                android:exported="true" />
+
+        <service android:name="com.android.systemui.FPSInfoService"
+                android:exported="true" />
+
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
 
@@ -624,6 +686,7 @@
                   android:theme="@style/Theme.SubSettingsBase.Expressive"
                   android:label="@string/system_ui_tuner"
                   android:process=":tuner"
+                  android:enableOnBackInvokedCallback="true"
                   android:exported="true">
             <intent-filter>
                 <action android:name="com.android.settings.action.EXTRA_SETTINGS" />
@@ -650,6 +713,10 @@
 
         <!-- Callback for deleting screenshot notification -->
         <receiver android:name=".screenshot.DeleteScreenshotReceiver"
+            android:exported="false" />
+
+        <!-- Callback for Google Lens screenshot notification -->
+        <receiver android:name=".screenshot.LensScreenshotReceiver"
             android:exported="false" />
 
         <!-- Callback for invoking a smart action from the screenshot notification. -->
@@ -1211,7 +1278,9 @@
                   android:exported="true">
             <intent-filter>
                 <action android:name="android.settings.panel.action.VOLUME" />
+                <action android:name="android.settings.panel.action.APP_VOLUME" />
                 <action android:name="com.android.systemui.action.LAUNCH_VOLUME_PANEL_DIALOG" />
+                <action android:name="com.android.systemui.action.LAUNCH_APP_VOLUME_PANEL_DIALOG" />
                 <action android:name="com.android.systemui.action.DISMISS_VOLUME_PANEL_DIALOG" />
             </intent-filter>
         </receiver>

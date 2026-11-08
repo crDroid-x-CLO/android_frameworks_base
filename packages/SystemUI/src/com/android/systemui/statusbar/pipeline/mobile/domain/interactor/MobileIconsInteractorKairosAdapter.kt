@@ -64,7 +64,7 @@ constructor(
     private val repo: MobileConnectionsRepository,
     repoK: MobileConnectionsRepositoryKairos,
     kairosNetwork: KairosNetwork,
-    @Application scope: CoroutineScope,
+    @Application private val scope: CoroutineScope,
     context: Context,
     mobileMappingsProxy: MobileMappingsProxy,
     private val userSetupRepo: UserSetupRepository,
@@ -113,6 +113,22 @@ constructor(
                 nameTag("MobileIconsInteractorKairosAdapter.isStackable"),
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
+
+    override val isRoamingForceHidden: Flow<Boolean> =
+        kairosInteractor.isRoamingForceHidden
+            .toColdConflatedFlow(kairosNetwork)
+            .stateIn(scope, SharingStarted.WhileSubscribed(), false)
+
+    override val isMobileHdForceHidden: Flow<Boolean> =
+        kairosInteractor.isMobileHdForceHidden
+            .toColdConflatedFlow(kairosNetwork)
+            .stateIn(scope, SharingStarted.WhileSubscribed(), true)
+
+    override val isVoWifiForceHidden: Flow<Boolean> =
+        kairosInteractor.isVoWifiForceHidden
+            .toColdConflatedFlow(kairosNetwork)
+            .stateIn(scope, SharingStarted.WhileSubscribed(), true)
+
     override val activeMobileDataSubscriptionId: StateFlow<Int?>
         get() = repo.activeMobileDataSubscriptionId
     override val activeDataConnectionHasDataEnabled: StateFlow<Boolean> =
@@ -249,12 +265,20 @@ constructor(
             override val hideNoInternetState = latest { hideNoInternetState }
             override val alwaysUseRsrpLevelForLte = latest { alwaysUseRsrpLevelForLte }
 
+            override val isRoamingForceHidden: Flow<Boolean> = latest { isRoamingForceHidden }
+            override val isMobileHd: Flow<Boolean> = latest { isMobileHd }
+            override val isMobileHdForceHidden: Flow<Boolean> = latest { isMobileHdForceHidden }
+            override val isVoWifi: Flow<Boolean> = latest { isVoWifi }
+            override val isVoWifiForceHidden: Flow<Boolean> = latest { isVoWifiForceHidden }
             override val isAllowedDuringAirplaneMode: Flow<Boolean> = latest {
                 isAllowedDuringAirplaneMode
             }
             override val carrierNetworkChangeActive: Flow<Boolean> = latest {
                 carrierNetworkChangeActive
             }
+
+            override val shouldShowFourgIcon: StateFlow<Boolean> = latest { shouldShowFourgIcon }
+                .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
             private fun <T> latest(block: MobileIconInteractor.() -> Flow<T>): Flow<T> =
                 interactorsBySubId.flatMapLatestConflated { it[subId]?.block() ?: emptyFlow() }

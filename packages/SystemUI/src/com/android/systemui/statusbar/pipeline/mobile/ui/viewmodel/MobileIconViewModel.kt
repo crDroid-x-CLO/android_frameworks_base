@@ -25,6 +25,7 @@ package com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel
 import android.telephony.TelephonyManager
 import com.android.settingslib.mobile.TelephonyIcons
 import com.android.settingslib.R as settingsLibR
+import com.android.settingslib.mobile.TelephonyIcons
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.log.table.logDiffsForTable
@@ -60,6 +61,7 @@ interface MobileIconViewModelCommon {
     val icon: Flow<SignalIconModel>
     val contentDescription: Flow<MobileContentDescription?>
     val roaming: Flow<Boolean>
+    val isRoamingVisible: Flow<Boolean>
     /** The RAT icon (LTE, 3G, 5G, etc) to be displayed. Null if we shouldn't show anything */
     val networkTypeIcon: Flow<Icon.Resource?>
     /** The slice attribution. Drawn as a background layer */
@@ -69,6 +71,7 @@ interface MobileIconViewModelCommon {
     val activityContainerVisible: Flow<Boolean>
     val volteId: Flow<Int>
     val showSignalStrengthIcon: Flow<Boolean>
+    val showHd: Flow<Boolean>
 }
 /**
  * View model for the state of a single mobile icon. Each [MobileIconViewModel] will keep watch over
@@ -129,6 +132,9 @@ class MobileIconViewModel(
     override val contentDescription: Flow<MobileContentDescription?> =
         vmProvider.flatMapLatest { it.contentDescription }
     override val roaming: Flow<Boolean> = vmProvider.flatMapLatest { it.roaming }
+
+    override val isRoamingVisible: Flow<Boolean> = vmProvider.flatMapLatest { it.isRoamingVisible }
+
     override val networkTypeIcon: Flow<Icon.Resource?> =
         vmProvider.flatMapLatest { it.networkTypeIcon }
     override val networkTypeBackground: StateFlow<Icon.Resource?> =
@@ -143,6 +149,8 @@ class MobileIconViewModel(
         vmProvider.flatMapLatest { it.activityContainerVisible }
     override val volteId: Flow<Int> =
         vmProvider.flatMapLatest { it.volteId }
+
+    override val showHd: Flow<Boolean> = vmProvider.flatMapLatest { it.showHd }
 
     override val showSignalStrengthIcon: Flow<Boolean> =
         vmProvider.flatMapLatest { it.showSignalStrengthIcon }
@@ -202,12 +210,14 @@ private class CarrierBasedSatelliteViewModelImpl(
 
     /** These fields are not used for satellite icons currently */
     override val roaming: Flow<Boolean> = flowOf(false)
+    override val isRoamingVisible: Flow<Boolean> = flowOf(false)
     override val networkTypeBackground: StateFlow<Icon.Resource?> = MutableStateFlow(null)
     override val activityInVisible: Flow<Boolean> = flowOf(false)
     override val activityOutVisible: Flow<Boolean> = flowOf(false)
     override val activityContainerVisible: Flow<Boolean> = flowOf(false)
     override val volteId: Flow<Int> = flowOf(0)
     override val showSignalStrengthIcon: Flow<Boolean> = flowOf(true)
+    override val showHd: Flow<Boolean> = flowOf(false)
 }
 /** Terrestrial (cellular) icon. */
 @Suppress("EXPERIMENTAL_IS_NOT_ENABLED")
@@ -306,11 +316,15 @@ private class CellularIconViewModel(
                 iconInteractor.networkTypeIconCustomization,
                 iconInteractor.voWifiAvailable,
                 iconInteractor.isInService,
+                iconInteractor.shouldShowFourgIcon,
             ) { networkTypeIconGroup, shouldShow, networkTypeIconCustomization, voWifiAvailable,
-                isInService ->
+                isInService, shouldShowFourgIcon ->
                 val desc =
-                    if (networkTypeIconGroup.contentDescription != 0)
-                        ContentDescription.Resource(networkTypeIconGroup.contentDescription)
+                    if (networkTypeIconGroup.contentDescription != 0) {
+                        var contDesc: Int = networkTypeIconGroup.contentDescription
+                        if (shouldShowFourgIcon) contDesc = convertLteToFourg(contDesc)
+                        ContentDescription.Resource(contDesc)
+                    }
                     else null
 // QTI_BEGIN: 2023-04-01: Data: SystemUI: Readapt VoWifi icon
                 val icon =
@@ -318,9 +332,11 @@ private class CellularIconViewModel(
                     if (voWifiAvailable) {
                         Icon.Resource(TelephonyIcons.VOWIFI.dataType, desc)
                     } else {
-                        if (networkTypeIconGroup.iconId != 0)
-                            Icon.Resource(networkTypeIconGroup.iconId, desc)
-                        else null
+                        if (networkTypeIconGroup.iconId != 0) {
+                            var contIcon: Int = networkTypeIconGroup.iconId
+                            if (shouldShowFourgIcon) contIcon = convertLteToFourg(contIcon)
+                            Icon.Resource(contIcon, desc)
+                        } else null
                     }
                 return@combine when {
                     voWifiAvailable -> icon
@@ -333,11 +349,37 @@ private class CellularIconViewModel(
                         }
                     }
                     !shouldShow -> null
+                    shouldShowFourgIcon ||
+                    !shouldShowFourgIcon -> icon
                     else -> icon
                 }
             }
             .distinctUntilChanged()
             .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+
+    private fun convertLteToFourg(res: Int): Int {
+        when (res) {
+            com.android.settingslib.R.string.data_connection_lte,
+            com.android.settingslib.R.string.data_connection_4g_lte -> {
+                return com.android.settingslib.R.string.data_connection_4g as Int
+            }
+            com.android.settingslib.R.string.data_connection_lte_plus,
+            com.android.settingslib.R.string.data_connection_4g_lte_plus -> {
+                return com.android.settingslib.R.string.data_connection_4g_plus as Int
+            }
+            TelephonyIcons.ICON_LTE,
+            TelephonyIcons.ICON_4G_LTE -> {
+                return TelephonyIcons.ICON_4G as Int
+            }
+            TelephonyIcons.ICON_LTE_PLUS,
+            TelephonyIcons.ICON_4G_LTE_PLUS -> {
+                return TelephonyIcons.ICON_4G_PLUS as Int
+            }
+            else -> {}
+        }
+        return res
+    }
+
     override val networkTypeBackground =
         iconInteractor.showSliceAttribution
             .map {
@@ -393,6 +435,15 @@ private class CellularIconViewModel(
         }
         .distinctUntilChanged()
         .stateIn(scope, SharingStarted.WhileSubscribed(), false)
+    override val isRoamingVisible: StateFlow<Boolean> =
+        combine(
+                roaming,
+                iconInteractor.isRoamingForceHidden
+            ) { isRoaming, isHidden ->
+                isRoaming && !isHidden
+            }
+            .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     private val activity: Flow<DataActivityModel?> =
         if (!constants.shouldShowActivityConfig) {
@@ -422,4 +473,30 @@ private class CellularIconViewModel(
             || mode.nonDdsRatIconEnhancementEnabled
                 && mode.mobileDataEnabled && (mode.dataRoamingEnabled || !mode.isRoaming))
     }
+
+    private val showVoWifi: StateFlow<Boolean> =
+        combine(
+                iconInteractor.isVoWifi,
+                iconInteractor.isVoWifiForceHidden
+            ) { isVoWifi, isHidden ->
+                // If it's force hidden, just hide.
+                // Otherwise follow VoWifi state
+                isVoWifi && !isHidden
+            }
+            .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.WhileSubscribed(), false)
+
+    override val showHd: StateFlow<Boolean> =
+        combine(
+                iconInteractor.isMobileHd,
+                iconInteractor.isMobileHdForceHidden,
+                showVoWifi,
+            ) { isHd, isHidden, voWifi ->
+                // If it's force hidden or VoWifi available, just hide.
+                // Otherwise follow HD state
+                isHd && !(isHidden || voWifi)
+            }
+            .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.WhileSubscribed(), false)
+
 }

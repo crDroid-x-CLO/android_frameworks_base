@@ -82,6 +82,9 @@ public class CastTile extends QSTileImpl<BooleanState> {
 
     private static final String INTERACTION_JANK_TAG = TILE_SPEC;
 
+    private static final Intent CAST_SETTINGS =
+            new Intent(Settings.ACTION_CAST_SETTINGS);
+
     private final CastController mController;
     private final KeyguardStateController mKeyguard;
     private final DialogTransitionAnimator mDialogTransitionAnimator;
@@ -92,6 +95,7 @@ public class CastTile extends QSTileImpl<BooleanState> {
     private boolean mHotspotConnected;
     private static final String WFD_ENABLE = "persist.debug.wfd.enable";
 
+    private boolean mHotspotEnabled;
     private final CastDetailsViewModel.Factory mCastDetailsViewModelFactory;
     private final DialogCreator mDialogCreator;
 
@@ -145,7 +149,6 @@ public class CastTile extends QSTileImpl<BooleanState> {
     @Override
     public BooleanState newTileState() {
         BooleanState state = new BooleanState();
-        state.handlesLongClick = false;
         return state;
     }
 
@@ -166,12 +169,7 @@ public class CastTile extends QSTileImpl<BooleanState> {
 
     @Override
     public Intent getLongClickIntent() {
-        return new Intent(Settings.ACTION_CAST_SETTINGS);
-    }
-
-    @Override
-    protected void handleLongClick(@Nullable Expandable expandable) {
-        handleClick(expandable);
+        return CAST_SETTINGS;
     }
 
     @Override
@@ -378,24 +376,24 @@ public class CastTile extends QSTileImpl<BooleanState> {
          if (Flags.qsCastTileSkipWifiCheck()) {
             return true;
         } else {
-            return mCastTransportAllowed || mHotspotConnected;
+            return mCastTransportAllowed || mHotspotEnabled;
         }
     }
 
-    private void setCastTransportAllowed(boolean connected) {
-        if (connected != mCastTransportAllowed) {
-            mCastTransportAllowed = connected;
-            // Hotspot is not connected, so changes here should update
-            if (!mHotspotConnected) {
+    private void setCastTransportAllowed(boolean enabled) {
+        if (enabled != mCastTransportAllowed) {
+            mCastTransportAllowed = enabled;
+            // Hotspot is not enabled, so changes here should update
+            if (!mHotspotEnabled) {
                 refreshState();
             }
         }
     }
 
-    private void setHotspotConnected(boolean connected) {
-        if (connected != mHotspotConnected) {
-            mHotspotConnected = connected;
-            // Wifi is not connected, so changes here should update
+    private void setHotspotEnabled(boolean enabled) {
+        if (enabled != mHotspotEnabled) {
+            mHotspotEnabled = enabled;
+            // Wifi is not enabled, so changes here should update
             if (!mCastTransportAllowed) {
                 refreshState();
             }
@@ -413,8 +411,7 @@ public class CastTile extends QSTileImpl<BooleanState> {
             new HotspotController.Callback() {
                 @Override
                 public void onHotspotChanged(boolean enabled, int numDevices) {
-                    boolean enabledAndConnected = enabled && numDevices > 0;
-                    setHotspotConnected(enabledAndConnected);
+                    setHotspotEnabled(enabled);
                 }
             };
 

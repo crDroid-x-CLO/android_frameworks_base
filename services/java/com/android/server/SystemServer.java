@@ -174,11 +174,14 @@ import com.android.server.contentsuggestions.ContentSuggestionsManagerService;
 import com.android.server.contextualsearch.ContextualSearchManagerService;
 import com.android.server.coverage.CoverageService;
 import com.android.server.cpu.CpuMonitorService;
+import com.android.server.crdroid.CustomDeviceConfigService;
 import com.android.server.credentials.CredentialManagerService;
 import com.android.server.criticalevents.CriticalEventLog;
 import com.android.server.devicepolicy.DevicePolicyManagerService;
 import com.android.server.devicestate.DeviceStateManagerService;
+import com.android.server.display.AutoAODService;
 import com.android.server.display.DisplayManagerService;
+import com.android.server.display.FreeformService;
 import com.android.server.display.color.ColorDisplayService;
 import com.android.server.dreams.DreamManagerService;
 import com.android.server.emergency.EmergencyAffordanceService;
@@ -243,6 +246,8 @@ import com.android.server.pm.dex.OdsignStatsLogger;
 import com.android.server.pm.permission.PermissionMigrationHelper;
 import com.android.server.pm.permission.PermissionMigrationHelperImpl;
 import com.android.server.pm.verify.domain.DomainVerificationService;
+import com.android.server.pocket.PocketBridgeService;
+import com.android.server.pocket.PocketService;
 import com.android.server.policy.AppOpsPolicy;
 import com.android.server.policy.PermissionPolicyService;
 import com.android.server.policy.PhoneWindowManager;
@@ -286,6 +291,7 @@ import com.android.server.smartspace.SmartspaceManagerService;
 import com.android.server.soundtrigger.SoundTriggerService;
 import com.android.server.soundtrigger_middleware.SoundTriggerMiddlewareService;
 import com.android.server.speech.SpeechRecognitionManagerService;
+import com.android.server.spoof.AxSpoofManagerService;
 import com.android.server.stats.binder.BinderStatsConsumerService;
 import com.android.server.stats.bootstrap.StatsBootstrapAtomService;
 import com.android.server.stats.pull.StatsPullAtomService;
@@ -298,6 +304,7 @@ import com.android.server.testharness.TestHarnessModeService;
 import com.android.server.textclassifier.TextClassificationManagerService;
 import com.android.server.textservices.TextServicesManagerService;
 import com.android.server.texttospeech.TextToSpeechManagerService;
+import com.android.server.theme.ThemeEngineManagerService;
 import com.android.server.theming.ThemeManagerService;
 import com.android.server.timedetector.GnssTimeUpdateService;
 import com.android.server.timedetector.NetworkTimeUpdateService;
@@ -324,6 +331,8 @@ import com.android.server.wallpapereffectsgeneration.WallpaperEffectsGenerationM
 import com.android.server.wearable.WearableSensingManagerService;
 import com.android.server.webkit.WebViewUpdateService;
 import com.android.server.wm.ActivityTaskManagerService;
+import com.android.server.wm.AxSandboxService;
+import com.android.server.wm.GameSpaceService;
 import com.android.server.wm.WindowManagerGlobalLock;
 import com.android.server.wm.WindowManagerService;
 
@@ -554,6 +563,8 @@ public final class SystemServer implements Dumpable {
     private final boolean mRuntimeRestart;
     private final long mRuntimeStartElapsedTime;
     private final long mRuntimeStartUptime;
+
+    public boolean safeMode = false;
 
     private static final String START_HIDL_SERVICES = "StartHidlServices";
     private static final String START_SENSOR_MANAGER_SERVICE = "StartISensorManagerService";
@@ -1028,7 +1039,7 @@ public final class SystemServer implements Dumpable {
             }
 
             // Attach JVMTI agent if this is a debuggable build and the system property is set.
-            if (Build.IS_DEBUGGABLE) {
+            if (Build.IS_ENG) {
                 // Property is of the form "library_path=parameters".
                 String jvmtiAgent = SystemProperties.get("persist.sys.dalvik.jvmtiagent");
                 if (!jvmtiAgent.isEmpty()) {
@@ -1335,6 +1346,10 @@ public final class SystemServer implements Dumpable {
         mSystemServiceManager.startService(ThermalManagerService.class);
         t.traceEnd();
 
+        t.traceBegin("StartAxSandboxService");
+        mSystemServiceManager.startService(new AxSandboxService(mSystemContext, atm));
+        t.traceEnd();
+
         // Now that the power manager has been started, let the activity manager
         // initialize power management features.
         t.traceBegin("InitPowerManagement");
@@ -1459,6 +1474,14 @@ public final class SystemServer implements Dumpable {
         // Manages Overlay packages
         t.traceBegin("StartOverlayManagerService");
         mSystemServiceManager.startService(new OverlayManagerService(mSystemContext));
+        t.traceEnd();
+
+        t.traceBegin("StartThemeEngineManagerService");
+        mSystemServiceManager.startService(ThemeEngineManagerService.class);
+        t.traceEnd();
+
+        t.traceBegin("StartAxSpoofManagerService");
+        mSystemServiceManager.startService(AxSpoofManagerService.class);
         t.traceEnd();
 
         // Manages Resources packages
@@ -1712,6 +1735,14 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(DropBoxManagerService.class);
             t.traceEnd();
 
+            t.traceBegin("InitVBMetaDigest");
+            try {
+                android.security.trickystore.AttestationUtils.initBootHash();
+            } catch (Throwable e) {
+                Slog.e(TAG, "Failed to init VBMeta digest", e);
+            }
+            t.traceEnd();
+
             if (android.permission.flags.Flags.enhancedConfirmationModeApisEnabled()) {
                 t.traceBegin("StartEnhancedConfirmationService");
                 mSystemServiceManager.startService(ENHANCED_CONFIRMATION_SERVICE_CLASS);
@@ -1801,6 +1832,10 @@ public final class SystemServer implements Dumpable {
 
             t.traceBegin("WindowManagerServiceOnInitReady");
             wm.onInitReady();
+            t.traceEnd();
+
+            t.traceBegin("StartGameSpaceService");
+            mSystemServiceManager.startService(GameSpaceService.class);
             t.traceEnd();
 
             // Start receiving calls from SensorManager services. Start in a separate thread
@@ -1925,7 +1960,10 @@ public final class SystemServer implements Dumpable {
 
         // Before things start rolling, be sure we have decided whether
         // we are in safe mode.
-        final boolean safeMode = wm.detectSafeMode();
+
+        if(wm != null) {
+            safeMode = wm.detectSafeMode();
+        }
         if (safeMode) {
             // If yes, immediately turn on the global setting for airplane mode.
             // Note that this does not send broadcasts at this stage because
@@ -2257,6 +2295,12 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
 
+            // CustomDeviceConfigService must run before services that read boot-time
+            // DeviceConfig flags.
+            t.traceBegin("StartCustomDeviceConfigService");
+            mSystemServiceManager.startService(CustomDeviceConfigService.class);
+            t.traceEnd();
+
             t.traceBegin("StartNetworkManagementService");
             try {
                 networkManagement = NetworkManagementService.create(context);
@@ -2304,8 +2348,9 @@ public final class SystemServer implements Dumpable {
             }
             t.traceEnd();
 
-            if (context.getPackageManager().hasSystemFeature(
-                    PackageManager.FEATURE_WIFI)) {
+            final boolean wifiSupported = context.getPackageManager().hasSystemFeature(
+                    PackageManager.FEATURE_WIFI);
+            if (wifiSupported) {
                 // Wifi Service must be started first for wifi-related services.
                 t.traceBegin("StartWifi");
                 mSystemServiceManager.startServiceFromJar(
@@ -2325,7 +2370,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (context.getPackageManager().hasSystemFeature(
+            if (wifiSupported && context.getPackageManager().hasSystemFeature(
                     PackageManager.FEATURE_WIFI_RTT)) {
                 t.traceBegin("StartRttService");
                 mSystemServiceManager.startServiceFromJar(
@@ -2333,7 +2378,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (context.getPackageManager().hasSystemFeature(
+            if (wifiSupported && context.getPackageManager().hasSystemFeature(
                     PackageManager.FEATURE_WIFI_AWARE)) {
                 t.traceBegin("StartWifiAware");
                 mSystemServiceManager.startServiceFromJar(
@@ -2341,7 +2386,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (context.getPackageManager().hasSystemFeature(
+            if (wifiSupported && context.getPackageManager().hasSystemFeature(
                     PackageManager.FEATURE_WIFI_DIRECT)) {
                 t.traceBegin("StartWifiP2P");
                 mSystemServiceManager.startServiceFromJar(
@@ -2935,6 +2980,10 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+            t.traceBegin("FreeformService");
+            mSystemServiceManager.startService(FreeformService.class);
+            t.traceEnd();
+
             if (!isWatch) {
                 t.traceBegin("StartPruneInstantAppsJobService");
                 try {
@@ -2966,6 +3015,20 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(CrossProfileAppsService.class);
             t.traceEnd();
 
+            if (context.getResources().getBoolean(
+                    com.android.internal.R.bool.config_pocketModeSupported)) {
+                t.traceBegin("StartPocketService");
+                mSystemServiceManager.startService(PocketService.class);
+                t.traceEnd();
+            }
+
+            if (!context.getResources().getString(
+                    com.android.internal.R.string.config_pocketBridgeSysfsInpocket).isEmpty()) {
+                t.traceBegin("StartPocketBridgeService");
+                mSystemServiceManager.startService(PocketBridgeService.class);
+                t.traceEnd();
+            }
+
             t.traceBegin("StartPeopleService");
             mSystemServiceManager.startService(PeopleService.class);
             t.traceEnd();
@@ -2980,6 +3043,13 @@ public final class SystemServer implements Dumpable {
                 mSystemServiceManager.startService(BackgroundInstallControlService.class);
                 t.traceEnd();
             }
+
+            if (context.getResources().getBoolean(R.bool.config_dozeAlwaysOnDisplayAvailable)) {
+                t.traceBegin("AutoAODService");
+                mSystemServiceManager.startService(AutoAODService.class);
+                t.traceEnd();
+            }
+
         }
 
         t.traceBegin("StartMediaProjectionManager");

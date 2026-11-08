@@ -16,16 +16,24 @@
 
 package com.android.systemui.brightness.ui.compose
 
+import android.content.BroadcastReceiver
 import android.content.ContentResolver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
+import android.media.AudioManager
 import android.os.UserHandle
+import android.os.Vibrator
+import android.provider.Settings
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import androidx.annotation.VisibleForTesting
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -34,6 +42,7 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -42,6 +51,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -66,14 +76,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.painter.BitmapPainter
@@ -81,6 +92,7 @@ import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -111,6 +123,12 @@ import com.android.systemui.brightness.ui.viewmodel.Drag
 import com.android.systemui.common.shared.colors.SystemUISliderColors
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.compose.modifiers.sysuiResTag
+import com.android.systemui.gradient.GradientColors
+import com.android.systemui.gradient.diagonal
+import com.android.systemui.gradient.horizontal
+import com.android.systemui.gradient.rememberGradientColors
+import com.android.systemui.gradient.rememberGradientEnabled
+import com.android.systemui.gradient.toPath
 import com.android.systemui.haptics.slider.SeekableSliderTrackerConfig
 import com.android.systemui.haptics.slider.SliderHapticFeedbackConfig
 import com.android.systemui.haptics.slider.compose.ui.SliderHapticsViewModel
@@ -118,6 +136,7 @@ import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.qs.ui.compose.borderOnFocus
 import com.android.systemui.res.R
 import com.android.systemui.util.policy.PolicyRestriction
+import kotlin.math.roundToInt
 import lineageos.providers.LineageSettings
 import platform.test.motion.compose.values.MotionTestValueKey
 import platform.test.motion.compose.values.motionTestValues
@@ -143,6 +162,17 @@ fun BrightnessSlider(
     hapticsViewModelFactory: SliderHapticsViewModel.Factory,
     dimensions: BrightnessSliderDimensions = BrightnessSliderDimensions.Default,
 ) {
+    val context = LocalContext.current
+    val cr = context.contentResolver
+
+    var hapticsEnabled by remember { mutableStateOf(readEnableHaptics(cr)) }
+
+    val shapeMode = rememberSliderShapeMode()
+    val trackCornerDp: Dp = trackCornerFor(shapeMode)
+
+    val isGradientEnabled = rememberGradientEnabled(Settings.System.QS_BRIGHTNESS_SLIDER_GRADIENT)
+    val gradientColors: GradientColors? = rememberGradientColors().takeIf { isGradientEnabled }
+
     var value by remember(gammaValue) { mutableIntStateOf(gammaValue) }
     val animatedValue by
         animateFloatAsState(targetValue = value.toFloat(), label = "BrightnessSliderAnimatedValue")
@@ -150,19 +180,35 @@ fun BrightnessSlider(
     val isRestricted = restriction is PolicyRestriction.Restricted
     val contentDescription = stringResource(R.string.accessibility_brightness)
     val interactionSource = remember { MutableInteractionSource() }
-    val hapticsViewModel: SliderHapticsViewModel =
-        rememberViewModel(traceName = "SliderHapticsViewModel") {
-            hapticsViewModelFactory.create(
-                interactionSource,
-                floatValueRange,
-                Orientation.Horizontal,
-                SliderHapticFeedbackConfig(
-                    maxVelocityToScale = 1f /* slider progress(from 0 to 1) per sec */
-                ),
-                SeekableSliderTrackerConfig(),
-            )
+    val hapticsViewModel: SliderHapticsViewModel? =
+        if (hapticsEnabled) {
+            rememberViewModel(traceName = "SliderHapticsViewModel") {
+                hapticsViewModelFactory.create(
+                    interactionSource,
+                    floatValueRange,
+                    Orientation.Horizontal,
+                    SliderHapticFeedbackConfig(
+                        maxVelocityToScale = 1f /* slider progress(from 0 to 1) per sec */
+                    ),
+                    SeekableSliderTrackerConfig(),
+                )
+            }
+        } else {
+            null
         }
-    val colors = SystemUISliderColors.Defaults
+    val baseColors = SystemUISliderColors.Defaults
+    val colors =
+        if (gradientColors != null) {
+            baseColors.copy(activeTrackColor = Color.Transparent)
+        } else {
+            baseColors
+        }
+    val thumbColors =
+        if (gradientColors != null) {
+            colors.copy(thumbColor = gradientColors.startColor)
+        } else {
+            colors
+        }
 
     // The value state is recreated every time gammaValue changes, so we recreate this derivedState
     // We have to use value as that's the value that changes when the user is dragging (gammaValue
@@ -175,7 +221,6 @@ fun BrightnessSlider(
                 iconResProvider(percentage)
             }
         }
-    val context = LocalContext.current
     val painter: Painter by
         produceState<Painter>(
             initialValue = ColorPainter(Color.Transparent),
@@ -211,7 +256,6 @@ fun BrightnessSlider(
         }
     }
 
-    val cr = context.contentResolver
     val hasAutoBrightness = context.resources.getBoolean(
         com.android.internal.R.bool.config_automatic_brightness_available
     )
@@ -222,12 +266,18 @@ fun BrightnessSlider(
             override fun onChange(selfChange: Boolean) {
                 context.mainExecutor.execute {
                     showAutoBrightness = readShowAutoBrightness(cr)
+                    hapticsEnabled = readEnableHaptics(cr)
                 }
             }
         }
 
         cr.registerContentObserver(
             LineageSettings.Secure.getUriFor(LineageSettings.Secure.QS_SHOW_AUTO_BRIGHTNESS),
+            false, observer, UserHandle.USER_ALL
+        )
+
+        cr.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.QS_BRIGHTNESS_SLIDER_HAPTIC),
             false, observer, UserHandle.USER_ALL
         )
 
@@ -248,7 +298,7 @@ fun BrightnessSlider(
             onValueChange = {
                 if (enabled) {
                     if (!overriddenByAppState) {
-                        hapticsViewModel.onValueChange(it)
+                        hapticsViewModel?.onValueChange(it)
                         value = it.toInt()
                         onDrag(value)
                     }
@@ -257,7 +307,7 @@ fun BrightnessSlider(
             onValueChangeFinished = {
                 if (enabled) {
                     if (!overriddenByAppState) {
-                        hapticsViewModel.onValueChangeEnded()
+                        hapticsViewModel?.onValueChangeEnded()
                         onStop(value)
                     }
                 }
@@ -269,110 +319,156 @@ fun BrightnessSlider(
                     .semantics(mergeDescendants = true) {
                         this.text = AnnotatedString(contentDescription)
                     }
-                .sliderPercentage {
-                    (value - valueRange.first).toFloat() / (valueRange.last - valueRange.first)
-                }
-                .thenIf(isRestricted) {
-                    Modifier.clickable {
-                        if (restriction is PolicyRestriction.Restricted) {
-                            onRestrictedClick(restriction)
-                        }
+                    .sliderPercentage {
+                        (value - valueRange.first).toFloat() / (valueRange.last - valueRange.first)
                     }
-                },
-        interactionSource = interactionSource,
-        thumb = {
-            SliderDefaults.Thumb(
-                interactionSource = interactionSource,
-                enabled = enabled,
-                thumbSize = DpSize(dimensions.thumbWidth, dimensions.thumbHeight),
-                colors = colors,
-            )
-        },
-        track = { sliderState ->
-            var showIconActive by remember { mutableStateOf(true) }
-            val iconActiveAlphaAnimatable = remember {
-                Animatable(
-                    initialValue = 1f,
-                    typeConverter = Float.VectorConverter,
-                    label = "iconActiveAlpha",
-                )
-            }
-
-            val iconInactiveAlphaAnimatable = remember {
-                Animatable(
-                    initialValue = 0f,
-                    typeConverter = Float.VectorConverter,
-                    label = "iconInactiveAlpha",
-                )
-            }
-
-            LaunchedEffect(iconActiveAlphaAnimatable, iconInactiveAlphaAnimatable, showIconActive) {
-                if (showIconActive) {
-                    launch { iconActiveAlphaAnimatable.appear() }
-                    launch { iconInactiveAlphaAnimatable.disappear() }
-                } else {
-                    launch { iconActiveAlphaAnimatable.disappear() }
-                    launch { iconInactiveAlphaAnimatable.appear() }
-                }
-            }
-
-            SliderDefaults.Track(
-                sliderState = sliderState,
-                modifier =
-                    Modifier.motionTestValues {
-                            iconActiveAlphaAnimatable.value exportAs
-                                BrightnessSliderMotionTestKeys.ActiveIconAlpha
-                            iconInactiveAlphaAnimatable.value exportAs
-                                BrightnessSliderMotionTestKeys.InactiveIconAlpha
-                        }
-                        .height(dimensions.trackHeight)
-                        .drawWithContent {
-                            drawContent()
-
-                            val yOffset = size.height / 2 - iconSize.toSize().height / 2
-                            val activeTrackStart = 0f
-                            val activeTrackEnd =
-                                size.width * sliderState.coercedValueAsFraction -
-                                    ThumbTrackGapSize.toPx()
-                            val inactiveTrackStart = activeTrackEnd + ThumbTrackGapSize.toPx() * 2
-                            val inactiveTrackEnd = size.width
-
-                            val activeTrackWidth = activeTrackEnd - activeTrackStart
-                            val inactiveTrackWidth = inactiveTrackEnd - inactiveTrackStart
-
-                            if (
-                                iconSize.toSize().width <
-                                    inactiveTrackWidth - IconPadding.toPx() * 2
-                            ) {
-                                showIconActive = false
-                                trackIcon(
-                                    Offset(inactiveTrackEnd, yOffset),
-                                    inactiveIconColor,
-                                    iconInactiveAlphaAnimatable.value,
-                                )
-                            } else if (
-                                iconSize.toSize().width < activeTrackWidth - IconPadding.toPx() * 2
-                            ) {
-                                showIconActive = true
-                                trackIcon(
-                                    Offset(activeTrackEnd, yOffset),
-                                    activeIconColor,
-                                    iconActiveAlphaAnimatable.value,
-                                )
+                    .thenIf(isRestricted) {
+                        Modifier.clickable {
+                            if (restriction is PolicyRestriction.Restricted) {
+                                onRestrictedClick(restriction)
                             }
-                        },
-                trackCornerSize = SliderTrackRoundedCorner,
-                trackInsideCornerSize = 2.dp,
-                drawStopIndicator = null,
-                thumbTrackGapSize = ThumbTrackGapSize,
-                colors = colors,
-            )
-        },
-    )
+                        }
+                    },
+            interactionSource = interactionSource,
+            thumb = {
+                SliderDefaults.Thumb(
+                    interactionSource = interactionSource,
+                    enabled = enabled,
+                    thumbSize = DpSize(dimensions.thumbWidth, dimensions.thumbHeight),
+                    colors = thumbColors,
+                )
+            },
+            track = { sliderState ->
+                var showIconActive by remember { mutableStateOf(true) }
+                val iconActiveAlphaAnimatable = remember {
+                    Animatable(
+                        initialValue = 1f,
+                        typeConverter = Float.VectorConverter,
+                        label = "iconActiveAlpha",
+                    )
+                }
+
+                val iconInactiveAlphaAnimatable = remember {
+                    Animatable(
+                        initialValue = 0f,
+                        typeConverter = Float.VectorConverter,
+                        label = "iconInactiveAlpha",
+                    )
+                }
+
+                LaunchedEffect(
+                    iconActiveAlphaAnimatable,
+                    iconInactiveAlphaAnimatable,
+                    showIconActive,
+                ) {
+                    if (showIconActive) {
+                        launch { iconActiveAlphaAnimatable.appear() }
+                        launch { iconInactiveAlphaAnimatable.disappear() }
+                    } else {
+                        launch { iconActiveAlphaAnimatable.disappear() }
+                        launch { iconInactiveAlphaAnimatable.appear() }
+                    }
+                }
+
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    modifier =
+                        Modifier.motionTestValues {
+                                iconActiveAlphaAnimatable.value exportAs
+                                    BrightnessSliderMotionTestKeys.ActiveIconAlpha
+                                iconInactiveAlphaAnimatable.value exportAs
+                                    BrightnessSliderMotionTestKeys.InactiveIconAlpha
+                            }
+                            .height(dimensions.trackHeight)
+                            .drawWithCache {
+                                // Cache the track outline and the brush, they only depend on the
+                                // size/layout direction and not on the slider value.
+                                val trackPath =
+                                    RoundedCornerShape(trackCornerDp)
+                                        .createOutline(size, layoutDirection, this)
+                                        .toPath()
+                                val isRtl = layoutDirection == LayoutDirection.Rtl
+                                val gradientBrush: Brush? =
+                                    gradientColors?.horizontal(reversed = isRtl)
+
+                                onDrawWithContent {
+                                    drawContent()
+
+                                    if (gradientBrush != null) {
+                                        val gapPx = ThumbTrackGapSize.toPx()
+                                        val activeWidth =
+                                            (size.width * sliderState.coercedValueAsFraction -
+                                                    gapPx)
+                                                .coerceIn(0f, size.width)
+                                        if (activeWidth > 0f) {
+                                            clipPath(trackPath) {
+                                                drawRect(
+                                                    brush = gradientBrush,
+                                                    topLeft =
+                                                        if (isRtl) {
+                                                            Offset(size.width - activeWidth, 0f)
+                                                        } else {
+                                                            Offset.Zero
+                                                        },
+                                                    size = Size(activeWidth, size.height),
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    val yOffset = size.height / 2 - iconSize.toSize().height / 2
+                                    val activeTrackStart = 0f
+                                    val activeTrackEnd =
+                                        size.width * sliderState.coercedValueAsFraction -
+                                            ThumbTrackGapSize.toPx()
+                                    val inactiveTrackStart =
+                                        activeTrackEnd + ThumbTrackGapSize.toPx() * 2
+                                    val inactiveTrackEnd = size.width
+
+                                    val activeTrackWidth = activeTrackEnd - activeTrackStart
+                                    val inactiveTrackWidth = inactiveTrackEnd - inactiveTrackStart
+
+                                    if (
+                                        iconSize.toSize().width <
+                                            inactiveTrackWidth - IconPadding.toPx() * 2
+                                    ) {
+                                        showIconActive = false
+                                        trackIcon(
+                                            Offset(inactiveTrackEnd, yOffset),
+                                            inactiveIconColor,
+                                            iconInactiveAlphaAnimatable.value,
+                                        )
+                                    } else if (
+                                        iconSize.toSize().width <
+                                            activeTrackWidth - IconPadding.toPx() * 2
+                                    ) {
+                                        showIconActive = true
+                                        trackIcon(
+                                            Offset(activeTrackEnd, yOffset),
+                                            activeIconColor,
+                                            iconActiveAlphaAnimatable.value,
+                                        )
+                                    }
+                                }
+                            },
+                    trackCornerSize = trackCornerDp,
+                    trackInsideCornerSize = 2.dp,
+                    drawStopIndicator = null,
+                    thumbTrackGapSize = ThumbTrackGapSize,
+                    colors = colors,
+                )
+            },
+        )
 
         if (hasAutoBrightness && showAutoBrightness) {
             Spacer(modifier = Modifier.width(10.dp))
-            drawAutoBrightnessButton(autoMode = autoMode, onIconClick = onIconClick)
+            drawAutoBrightnessButton(
+                autoMode = autoMode,
+                onIconClick = onIconClick,
+                hapticsEnabled = hapticsEnabled,
+                gradientColors = gradientColors,
+                buttonSize = dimensions.thumbHeight,
+            )
         }
     }
 
@@ -386,6 +482,551 @@ fun BrightnessSlider(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun VolumeSlider(
+    hapticsViewModelFactory: SliderHapticsViewModel.Factory,
+    modifier: Modifier = Modifier,
+    dimensions: BrightnessSliderDimensions = BrightnessSliderDimensions.Default,
+) {
+    val context = LocalContext.current
+    val cr = context.contentResolver
+
+    val audioManager = remember(context) { context.getSystemService(AudioManager::class.java) }
+    val streamType = AudioManager.STREAM_MUSIC
+
+    val maxVolume =
+        remember(audioManager) {
+            runCatching { audioManager?.getStreamMaxVolume(streamType) }.getOrNull() ?: 100
+        }
+    val minVolume =
+        remember(audioManager) {
+            runCatching { audioManager?.getStreamMinVolume(streamType) }.getOrNull() ?: 0
+        }
+    // Guard against a degenerate range on odd device configurations.
+    val safeMax = if (maxVolume > minVolume) maxVolume else minVolume + 1
+    val floatValueRange = minVolume.toFloat()..safeMax.toFloat()
+
+    var hapticsEnabled by remember { mutableStateOf(readEnableHaptics(cr)) }
+    val showRinger = rememberShowRingerMode()
+
+    val shapeMode = rememberSliderShapeMode()
+    val trackCornerDp: Dp = trackCornerFor(shapeMode)
+
+    val isGradientEnabled = rememberGradientEnabled(Settings.System.QS_BRIGHTNESS_SLIDER_GRADIENT)
+    val gradientColors: GradientColors? = rememberGradientColors().takeIf { isGradientEnabled }
+
+    val baseColors = SystemUISliderColors.Defaults
+    val colors =
+        if (gradientColors != null) {
+            baseColors.copy(activeTrackColor = Color.Transparent)
+        } else {
+            baseColors
+        }
+    val thumbColors =
+        if (gradientColors != null) {
+            colors.copy(thumbColor = gradientColors.startColor)
+        } else {
+            colors
+        }
+    val activeIconColor = colors.activeTickColor
+    val inactiveIconColor = colors.inactiveTickColor
+    val iconSize = dimensions.iconSize
+
+    var dragging by remember { mutableStateOf(false) }
+    var systemVolume by
+        remember(audioManager) {
+            mutableIntStateOf(
+                runCatching { audioManager?.getStreamVolume(streamType) }.getOrNull() ?: minVolume
+            )
+        }
+    var value by remember(audioManager) { mutableIntStateOf(systemVolume) }
+
+    LaunchedEffect(systemVolume) {
+        if (!dragging) {
+            value = systemVolume
+        }
+    }
+    val animatedValue by
+        animateFloatAsState(targetValue = value.toFloat(), label = "VolumeSliderAnimatedValue")
+
+    DisposableEffect(context, audioManager) {
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(c: Context?, intent: Intent?) {
+                    if (intent?.action == AudioManager.VOLUME_CHANGED_ACTION) {
+                        val type = intent.getIntExtra(AudioManager.EXTRA_VOLUME_STREAM_TYPE, -1)
+                        if (type == streamType) {
+                            systemVolume =
+                                intent.getIntExtra(
+                                    AudioManager.EXTRA_VOLUME_STREAM_VALUE,
+                                    systemVolume,
+                                )
+                        }
+                    }
+                }
+            }
+        context.registerReceiver(
+            receiver,
+            IntentFilter(AudioManager.VOLUME_CHANGED_ACTION),
+            Context.RECEIVER_NOT_EXPORTED,
+        )
+
+        val hapticsObserver =
+            object : ContentObserver(null) {
+                override fun onChange(selfChange: Boolean) {
+                    context.mainExecutor.execute { hapticsEnabled = readEnableHaptics(cr) }
+                }
+            }
+        cr.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.QS_BRIGHTNESS_SLIDER_HAPTIC),
+            false,
+            hapticsObserver,
+            UserHandle.USER_ALL,
+        )
+
+        onDispose {
+            runCatching { context.unregisterReceiver(receiver) }
+            runCatching { cr.unregisterContentObserver(hapticsObserver) }
+        }
+    }
+
+    LaunchedEffect(audioManager) {
+        runCatching { audioManager?.getStreamVolume(streamType) }.getOrNull()?.let {
+            systemVolume = it
+        }
+    }
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val hapticsViewModel: SliderHapticsViewModel? =
+        if (hapticsEnabled) {
+            rememberViewModel(traceName = "VolumeSliderHapticsViewModel") {
+                hapticsViewModelFactory.create(
+                    interactionSource,
+                    floatValueRange,
+                    Orientation.Horizontal,
+                    SliderHapticFeedbackConfig(
+                        maxVelocityToScale = 1f /* slider progress(from 0 to 1) per sec */
+                    ),
+                    SeekableSliderTrackerConfig(),
+                )
+            }
+        } else {
+            null
+        }
+
+    val iconRes =
+        if (value <= minVolume) R.drawable.ic_volume_media_mute else R.drawable.ic_volume_media
+    val painter = painterResource(iconRes)
+    val currentPainter by rememberUpdatedState(painter)
+    val trackIcon: DrawScope.(Offset, Color, Float) -> Unit = remember(iconSize) {
+        { offset, color, alpha ->
+            val rtl = layoutDirection == LayoutDirection.Rtl
+            scale(if (rtl) -1f else 1f, 1f) {
+                translate(offset.x - IconPadding.toPx() - iconSize.toSize().width, offset.y) {
+                    with(currentPainter) {
+                        draw(
+                            iconSize.toSize(),
+                            colorFilter = ColorFilter.tint(color),
+                            alpha = alpha,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    val contentDescription = stringResource(R.string.stream_music)
+
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+        Slider(
+            value = animatedValue,
+            valueRange = floatValueRange,
+            enabled = true,
+            colors = colors,
+            onValueChange = {
+                dragging = true
+                hapticsViewModel?.onValueChange(it)
+                val newValue = it.roundToInt().coerceIn(minVolume, safeMax)
+                if (newValue != value) {
+                    value = newValue
+                    setStreamVolume(audioManager, streamType, newValue)
+                }
+            },
+            onValueChangeFinished = {
+                hapticsViewModel?.onValueChangeEnded()
+                setStreamVolume(audioManager, streamType, value)
+                dragging = false
+            },
+            modifier =
+                Modifier.weight(1f)
+                    .sysuiResTag("volume_slider")
+                    .semantics(mergeDescendants = true) {
+                        this.text = AnnotatedString(contentDescription)
+                    }
+                    .sliderPercentage {
+                        (value - minVolume).toFloat() /
+                            (safeMax - minVolume).coerceAtLeast(1).toFloat()
+                    },
+            interactionSource = interactionSource,
+            thumb = {
+                SliderDefaults.Thumb(
+                    interactionSource = interactionSource,
+                    enabled = true,
+                    thumbSize = DpSize(dimensions.thumbWidth, dimensions.thumbHeight),
+                    colors = thumbColors,
+                )
+            },
+            track = { sliderState ->
+                var showIconActive by remember { mutableStateOf(true) }
+                val iconActiveAlphaAnimatable = remember {
+                    Animatable(
+                        initialValue = 1f,
+                        typeConverter = Float.VectorConverter,
+                        label = "volIconActiveAlpha",
+                    )
+                }
+                val iconInactiveAlphaAnimatable = remember {
+                    Animatable(
+                        initialValue = 0f,
+                        typeConverter = Float.VectorConverter,
+                        label = "volIconInactiveAlpha",
+                    )
+                }
+
+                LaunchedEffect(
+                    iconActiveAlphaAnimatable,
+                    iconInactiveAlphaAnimatable,
+                    showIconActive,
+                ) {
+                    if (showIconActive) {
+                        launch { iconActiveAlphaAnimatable.appear() }
+                        launch { iconInactiveAlphaAnimatable.disappear() }
+                    } else {
+                        launch { iconActiveAlphaAnimatable.disappear() }
+                        launch { iconInactiveAlphaAnimatable.appear() }
+                    }
+                }
+
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    modifier =
+                        Modifier.height(dimensions.trackHeight).drawWithCache {
+                            val trackPath =
+                                RoundedCornerShape(trackCornerDp)
+                                    .createOutline(size, layoutDirection, this)
+                                    .toPath()
+                            val isRtl = layoutDirection == LayoutDirection.Rtl
+                            val gradientBrush: Brush? =
+                                gradientColors?.horizontal(reversed = isRtl)
+
+                            onDrawWithContent {
+                                drawContent()
+
+                                if (gradientBrush != null) {
+                                    val gapPx = ThumbTrackGapSize.toPx()
+                                    val activeWidth =
+                                        (size.width * sliderState.coercedValueAsFraction - gapPx)
+                                            .coerceIn(0f, size.width)
+                                    if (activeWidth > 0f) {
+                                        clipPath(trackPath) {
+                                            drawRect(
+                                                brush = gradientBrush,
+                                                topLeft =
+                                                    if (isRtl) {
+                                                        Offset(size.width - activeWidth, 0f)
+                                                    } else {
+                                                        Offset.Zero
+                                                    },
+                                                size = Size(activeWidth, size.height),
+                                            )
+                                        }
+                                    }
+                                }
+
+                                val yOffset = size.height / 2 - iconSize.toSize().height / 2
+                                val activeTrackStart = 0f
+                                val activeTrackEnd =
+                                    size.width * sliderState.coercedValueAsFraction -
+                                        ThumbTrackGapSize.toPx()
+                                val inactiveTrackStart =
+                                    activeTrackEnd + ThumbTrackGapSize.toPx() * 2
+                                val inactiveTrackEnd = size.width
+
+                                val activeTrackWidth = activeTrackEnd - activeTrackStart
+                                val inactiveTrackWidth = inactiveTrackEnd - inactiveTrackStart
+
+                                if (
+                                    iconSize.toSize().width <
+                                        inactiveTrackWidth - IconPadding.toPx() * 2
+                                ) {
+                                    showIconActive = false
+                                    trackIcon(
+                                        Offset(inactiveTrackEnd, yOffset),
+                                        inactiveIconColor,
+                                        iconInactiveAlphaAnimatable.value,
+                                    )
+                                } else if (
+                                    iconSize.toSize().width <
+                                        activeTrackWidth - IconPadding.toPx() * 2
+                                ) {
+                                    showIconActive = true
+                                    trackIcon(
+                                        Offset(activeTrackEnd, yOffset),
+                                        activeIconColor,
+                                        iconActiveAlphaAnimatable.value,
+                                    )
+                                }
+                            }
+                        },
+                    trackCornerSize = trackCornerDp,
+                    trackInsideCornerSize = 2.dp,
+                    drawStopIndicator = null,
+                    thumbTrackGapSize = ThumbTrackGapSize,
+                    colors = colors,
+                )
+            },
+        )
+
+        if (showRinger) {
+            Spacer(modifier = Modifier.width(10.dp))
+            VolumeRingerButton(
+                hapticsEnabled = hapticsEnabled,
+                gradientColors = gradientColors,
+                buttonSize = dimensions.thumbHeight,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VolumeRingerButton(
+    hapticsEnabled: Boolean,
+    gradientColors: GradientColors? = null,
+    buttonSize: Dp = 52.dp,
+) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val audioManager = remember(context) { context.getSystemService(AudioManager::class.java) }
+    val hasVibrator =
+        remember(context) {
+            runCatching { context.getSystemService(Vibrator::class.java)?.hasVibrator() }
+                .getOrNull() == true
+        }
+
+    var ringerMode by
+        remember(audioManager) { mutableIntStateOf(readRingerMode(audioManager)) }
+
+    DisposableEffect(context, audioManager) {
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(c: Context?, intent: Intent?) {
+                    when (intent?.action) {
+                        AudioManager.RINGER_MODE_CHANGED_ACTION,
+                        AudioManager.INTERNAL_RINGER_MODE_CHANGED_ACTION ->
+                            ringerMode = readRingerMode(audioManager)
+                    }
+                }
+            }
+        val filter =
+            IntentFilter().apply {
+                addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
+                addAction(AudioManager.INTERNAL_RINGER_MODE_CHANGED_ACTION)
+            }
+        context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        onDispose { runCatching { context.unregisterReceiver(receiver) } }
+    }
+
+    val isOn = ringerMode != AudioManager.RINGER_MODE_SILENT
+    val ringerBrush: Brush? = if (isOn) gradientColors?.diagonal() else null
+
+    val backgroundColor by
+        animateColorAsState(
+            targetValue =
+                if (isOn) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    LocalAndroidColorScheme.current.surfaceEffect1
+                }
+        )
+    val iconTint by
+        animateColorAsState(
+            targetValue =
+                if (isOn) {
+                    MaterialTheme.colorScheme.onPrimary
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+        )
+    val animatedCornerRadius by
+        animateDpAsState(
+            targetValue = if (isOn) SliderTrackRoundedCorner else buttonSize / 2
+        )
+    val shapeMode = rememberSliderShapeMode()
+    val ringerShape =
+        when (shapeMode) {
+            1 -> CircleShape
+            2 -> RoundedCornerShape(12.dp)
+            3 -> RoundedCornerShape(0.dp)
+            else -> RoundedCornerShape(animatedCornerRadius)
+        }
+
+    val painterRes =
+        when (ringerMode) {
+            AudioManager.RINGER_MODE_VIBRATE -> R.drawable.ic_volume_ringer_vibrate
+            AudioManager.RINGER_MODE_SILENT -> R.drawable.ic_speaker_mute
+            else -> R.drawable.ic_speaker_on
+        }
+    val hapticConstant =
+        if (isOn) HapticFeedbackConstants.TOGGLE_ON else HapticFeedbackConstants.TOGGLE_OFF
+    val contentDescription =
+        when (ringerMode) {
+            AudioManager.RINGER_MODE_VIBRATE -> stringResource(R.string.accessibility_ringer_vibrate)
+            AudioManager.RINGER_MODE_SILENT -> stringResource(R.string.accessibility_ringer_silent)
+            else -> stringResource(R.string.stream_ring)
+        }
+
+    IconButton(
+        onClick = {
+            if (hapticsEnabled) {
+                view.performHapticFeedback(hapticConstant)
+            }
+            val next = nextRingerMode(ringerMode, hasVibrator)
+            // Can throw when DND policy access is not granted; fall back to the real state.
+            val applied = runCatching { audioManager?.ringerModeInternal = next }.isSuccess
+            ringerMode = if (applied) next else readRingerMode(audioManager)
+        },
+        modifier =
+            Modifier.size(buttonSize)
+                .clip(ringerShape)
+                .background(backgroundColor)
+                .thenIf(ringerBrush != null) { Modifier.background(ringerBrush!!) },
+    ) {
+        Icon(
+            painter = painterResource(painterRes),
+            contentDescription = contentDescription,
+            tint = iconTint,
+        )
+    }
+}
+
+@Composable
+fun rememberSliderShapeMode(): Int {
+    val context = LocalContext.current
+    val contentResolver = context.contentResolver
+
+    fun readShapeMode(): Int {
+        return try {
+            Settings.System.getIntForUser(
+                contentResolver, Settings.System.QS_BRIGHTNESS_SLIDER_SHAPE, 0,
+                UserHandle.USER_CURRENT
+            )
+        } catch (_: Throwable) {
+            0
+        }
+    }
+
+    var shapeMode by remember { mutableIntStateOf(readShapeMode()) }
+
+    DisposableEffect(contentResolver) {
+        val observer = object : ContentObserver(null) {
+            override fun onChange(selfChange: Boolean) {
+                context.mainExecutor.execute {
+                    shapeMode = readShapeMode()
+                }
+            }
+        }
+
+        contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.QS_BRIGHTNESS_SLIDER_SHAPE),
+            false, observer, UserHandle.USER_ALL
+        )
+
+        onDispose {
+            contentResolver.unregisterContentObserver(observer)
+        }
+    }
+
+    return shapeMode
+}
+
+/**
+ * Layout of the volume slider inside the QS brightness row.
+ *
+ * 0 - brightness only (volume slider hidden)
+ * 1 - volume slider beside the brightness slider
+ * 2 - volume slider only (brightness slider hidden)
+ * 3 - volume slider below the brightness slider
+ */
+@Composable
+private fun rememberVolumeSliderMode(): Int {
+    val context = LocalContext.current
+    val contentResolver = context.contentResolver
+
+    fun readMode(): Int {
+        return try {
+            Settings.System.getIntForUser(
+                contentResolver, Settings.System.QS_SHOW_VOLUME_SLIDER,
+                VolumeSliderMode.DEFAULT, UserHandle.USER_CURRENT
+            ).coerceIn(VolumeSliderMode.OFF, VolumeSliderMode.BELOW)
+        } catch (_: Throwable) {
+            VolumeSliderMode.DEFAULT
+        }
+    }
+
+    var mode by remember { mutableIntStateOf(readMode()) }
+
+    DisposableEffect(contentResolver) {
+        val observer = object : ContentObserver(null) {
+            override fun onChange(selfChange: Boolean) {
+                context.mainExecutor.execute {
+                    mode = readMode()
+                }
+            }
+        }
+
+        contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.QS_SHOW_VOLUME_SLIDER),
+            false, observer, UserHandle.USER_ALL
+        )
+
+        onDispose {
+            contentResolver.unregisterContentObserver(observer)
+        }
+    }
+
+    return mode
+}
+
+@Composable
+private fun rememberShowRingerMode(): Boolean {
+    val context = LocalContext.current
+    val contentResolver = context.contentResolver
+
+    var enabled by remember { mutableStateOf(readShowRingerMode(contentResolver)) }
+
+    DisposableEffect(contentResolver) {
+        val observer = object : ContentObserver(null) {
+            override fun onChange(selfChange: Boolean) {
+                context.mainExecutor.execute {
+                    enabled = readShowRingerMode(contentResolver)
+                }
+            }
+        }
+
+        contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.QS_SHOW_RINGER_MODE),
+            false, observer, UserHandle.USER_ALL
+        )
+
+        onDispose {
+            contentResolver.unregisterContentObserver(observer)
+        }
+    }
+
+    return enabled
 }
 
 private fun Modifier.sliderBackground(
@@ -402,6 +1043,22 @@ private fun Modifier.sliderBackground(
     }
 }
 
+private fun trackCornerFor(shapeMode: Int, default: Dp = SliderTrackRoundedCorner): Dp =
+    when (shapeMode) {
+        1 -> 24.dp /* Circle */
+        2 -> 12.dp /* Rounded Square */
+        3 -> 0.dp /* Square */
+        else -> default
+    }
+
+private fun backgroundCornerFor(shapeMode: Int, default: Dp): Dp =
+    when (shapeMode) {
+        1 -> 50.dp /* Circle */
+        2 -> 24.dp /* Rounded Square */
+        3 -> 0.dp /* Square */
+        else -> default
+    }
+
 private fun readShowAutoBrightness(cr: ContentResolver): Boolean =
     try {
         LineageSettings.Secure.getIntForUser(
@@ -412,12 +1069,60 @@ private fun readShowAutoBrightness(cr: ContentResolver): Boolean =
         false
     }
 
+private fun readEnableHaptics(cr: ContentResolver): Boolean =
+    try {
+        Settings.System.getIntForUser(
+            cr, Settings.System.QS_BRIGHTNESS_SLIDER_HAPTIC,
+            1, UserHandle.USER_CURRENT
+        ) != 0
+    } catch (_: Throwable) {
+        false
+    }
+
+private fun readShowRingerMode(cr: ContentResolver): Boolean =
+    try {
+        Settings.System.getIntForUser(
+            cr, Settings.System.QS_SHOW_RINGER_MODE,
+            1, UserHandle.USER_CURRENT
+        ) != 0
+    } catch (_: Throwable) {
+        true
+    }
+
+private fun readRingerMode(audioManager: AudioManager?): Int =
+    runCatching { audioManager?.ringerModeInternal }.getOrNull()
+        ?: AudioManager.RINGER_MODE_NORMAL
+
+private fun nextRingerMode(current: Int, hasVibrator: Boolean): Int =
+    if (hasVibrator) {
+        when (current) {
+            AudioManager.RINGER_MODE_NORMAL -> AudioManager.RINGER_MODE_VIBRATE
+            AudioManager.RINGER_MODE_VIBRATE -> AudioManager.RINGER_MODE_SILENT
+            else -> AudioManager.RINGER_MODE_NORMAL
+        }
+    } else {
+        when (current) {
+            AudioManager.RINGER_MODE_NORMAL -> AudioManager.RINGER_MODE_SILENT
+            else -> AudioManager.RINGER_MODE_NORMAL
+        }
+    }
+
+/** Setting the stream volume can throw when a DND policy is active. */
+private fun setStreamVolume(audioManager: AudioManager?, streamType: Int, volume: Int) {
+    runCatching { audioManager?.setStreamVolume(streamType, volume, 0) }
+}
+
 @Composable
 private fun drawAutoBrightnessButton(
     autoMode: Boolean,
     onIconClick: suspend () -> Unit,
+    hapticsEnabled: Boolean,
+    gradientColors: GradientColors? = null,
+    buttonSize: Dp = 52.dp,
 ) {
+    val view = LocalView.current
     val coroutineScope = rememberCoroutineScope()
+    val autoBrush: Brush? = if (autoMode) gradientColors?.diagonal() else null
     val backgroundColor by animateColorAsState(
         targetValue = if (autoMode) {
             MaterialTheme.colorScheme.primary
@@ -437,13 +1142,40 @@ private fun drawAutoBrightnessButton(
     } else {
         R.drawable.ic_qs_brightness_auto_off
     }
+    val hapticConstant = if (autoMode) {
+        HapticFeedbackConstants.TOGGLE_OFF
+    } else {
+        HapticFeedbackConstants.TOGGLE_ON
+    }
+    val animatedCornerRadius by animateDpAsState(
+        targetValue = if (autoMode) {
+            SliderTrackRoundedCorner
+        } else {
+            buttonSize / 2
+        }
+    )
+    val shapeMode = rememberSliderShapeMode()
+    val autoIconShape = when (shapeMode) {
+        1 -> CircleShape
+        2 -> RoundedCornerShape(12.dp)
+        3 -> RoundedCornerShape(0.dp)
+        else -> RoundedCornerShape(animatedCornerRadius)
+    }
 
     IconButton(
-        onClick = { coroutineScope.launch { onIconClick() } },
+        onClick = {
+            if (hapticsEnabled) {
+                view.performHapticFeedback(hapticConstant)
+            }
+            coroutineScope.launch { onIconClick() }
+        },
         modifier = Modifier
-            .size(52.dp)
-            .clip(CircleShape)
+            .size(buttonSize)
+            .clip(autoIconShape)
             .background(backgroundColor)
+            .thenIf(autoBrush != null) {
+                Modifier.background(autoBrush!!)
+            }
     ) {
         Icon(
             painter = painterResource(painterRes),
@@ -460,10 +1192,19 @@ fun BrightnessSliderContainer(
     containerColors: ContainerColors,
     dimensions: BrightnessSliderDimensions = BrightnessSliderDimensions.Default,
 ) {
+    val volumeSliderMode = rememberVolumeSliderMode()
+    val wantsBrightness = volumeSliderMode != VolumeSliderMode.VOLUME_ONLY
+    val wantsVolume = volumeSliderMode != VolumeSliderMode.OFF
+
     val gamma = viewModel.currentBrightness.value
-    if (gamma == BrightnessSliderViewModel.initialValue.value) { // Ignore initial negative value.
+    // Ignore initial negative value, but keep rendering the volume slider if it is the only
+    // thing on screen (or while brightness is still settling).
+    val brightnessReady = gamma != BrightnessSliderViewModel.initialValue.value
+    if (!brightnessReady && !wantsVolume) {
         return
     }
+    val showBrightness = wantsBrightness && brightnessReady
+
     val autoMode = viewModel.autoMode
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -474,6 +1215,11 @@ fun BrightnessSliderContainer(
     val overriddenByAppState by viewModel.brightnessOverriddenByWindow.collectAsStateWithLifecycle()
     var dragging by remember { mutableStateOf(false) }
     var enabled by remember { mutableStateOf(false) }
+
+    val shapeMode = rememberSliderShapeMode()
+    val trackCornerDp: Dp = trackCornerFor(shapeMode)
+    val backgroundRoundedCorner: Dp =
+        backgroundCornerFor(shapeMode, dimensions.backgroundRoundedCorner)
 
     DisposableEffectWithLifecycle(Unit) {
         enabled = true
@@ -496,14 +1242,12 @@ fun BrightnessSliderContainer(
             }
         )
 
+    val backgroundFrameSize =
+        DpSize(dimensions.backgroundFrameWidth, dimensions.backgroundFrameHeight)
+
     val isRestricted = restriction is PolicyRestriction.Restricted
-    Box(
-        modifier =
-            modifier
-                .padding(vertical = { dimensions.verticalPadding.roundToPx() })
-                .fillMaxWidth()
-                .sysuiResTag("brightness_slider")
-    ) {
+
+    val brightnessSlider: @Composable () -> Unit = {
         BrightnessSlider(
             enabled = enabled && !isRestricted,
             gammaValue = gamma,
@@ -527,12 +1271,12 @@ fun BrightnessSliderContainer(
             modifier =
                 Modifier.borderOnFocus(
                         color = MaterialTheme.colorScheme.secondary,
-                        cornerSize = CornerSize(SliderTrackRoundedCorner),
+                        cornerSize = CornerSize(trackCornerDp),
                     )
                     .then(if (viewModel.showMirror) Modifier.drawInOverlay() else Modifier)
                     .sliderBackground(
-                        DpSize(dimensions.backgroundFrameWidth, dimensions.backgroundFrameHeight),
-                        dimensions.backgroundRoundedCorner,
+                        backgroundFrameSize,
+                        backgroundRoundedCorner,
                         containerColor,
                     )
                     .fillMaxWidth()
@@ -556,6 +1300,77 @@ fun BrightnessSliderContainer(
             dimensions = dimensions,
         )
     }
+
+    val volumeSlider: @Composable () -> Unit = {
+        VolumeSlider(
+            hapticsViewModelFactory = viewModel.hapticsViewModelFactory,
+            modifier =
+                Modifier.borderOnFocus(
+                        color = MaterialTheme.colorScheme.secondary,
+                        cornerSize = CornerSize(trackCornerDp),
+                    )
+                    // The volume slider is never mirrored, so it keeps the idle container color.
+                    .sliderBackground(
+                        backgroundFrameSize,
+                        backgroundRoundedCorner,
+                        containerColors.idleColor,
+                    )
+                    .fillMaxWidth(),
+            dimensions = dimensions,
+        )
+    }
+
+    // Leave room for both background frames plus a small visual gap between the two sliders.
+    val horizontalGap = dimensions.backgroundFrameWidth * 2 + 4.dp
+    val verticalGap = dimensions.backgroundFrameHeight * 2 + 4.dp
+
+    Box(
+        modifier =
+            modifier
+                .padding(vertical = { dimensions.verticalPadding.roundToPx() })
+                .fillMaxWidth()
+                .sysuiResTag("brightness_slider")
+    ) {
+        when {
+            showBrightness && wantsVolume && volumeSliderMode == VolumeSliderMode.BESIDE ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Box(modifier = Modifier.weight(1f)) { brightnessSlider() }
+
+                    Spacer(modifier = Modifier.width(horizontalGap))
+
+                    Box(modifier = Modifier.weight(1f)) { volumeSlider() }
+                }
+
+            showBrightness && wantsVolume && volumeSliderMode == VolumeSliderMode.BELOW ->
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    brightnessSlider()
+
+                    Spacer(modifier = Modifier.height(verticalGap))
+
+                    volumeSlider()
+                }
+
+            showBrightness -> brightnessSlider()
+
+            else -> volumeSlider()
+        }
+    }
+}
+
+private object VolumeSliderMode {
+    /** Brightness slider only. */
+    const val OFF = 0
+    /** Volume slider next to the brightness slider. */
+    const val BESIDE = 1
+    /** Volume slider instead of the brightness slider. */
+    const val VOLUME_ONLY = 2
+    /** Volume slider below the brightness slider. */
+    const val BELOW = 3
+
+    const val DEFAULT = BESIDE
 }
 
 data class ContainerColors(val idleColor: Color, val mirrorColor: Color) {

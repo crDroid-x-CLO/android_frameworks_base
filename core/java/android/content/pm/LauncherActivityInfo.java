@@ -120,6 +120,10 @@ public class LauncherActivityInfo {
 
     /**
      * Returns the icon for this activity, without any badging for the profile.
+     *
+     * <p>The returned drawable is subject to the same size capping limits as described
+     * in {@link PackageManager#getApplicationIcon(ApplicationInfo)}.</p>
+     *
      * @param density The preferred density of the icon, zero for default density. Use
      * density DPI values from {@link DisplayMetrics}.
      * @see #getBadgedIcon(int)
@@ -127,6 +131,21 @@ public class LauncherActivityInfo {
      * @return The drawable associated with the activity.
      */
     public Drawable getIcon(int density) {
+        try {
+            ComponentName cn = getComponentName();
+            final Resources resources = mPm.getResourcesForApplication(
+                    getActivityInfo().applicationInfo);
+            if (cn != null && resources != null) {
+                Drawable themedIcon = resources.getIconPackOverride(
+                        cn.getPackageName(), cn.getClassName(), density);
+                if (themedIcon != null) {
+                    return themedIcon;
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.d("LauncherActivityInfo", "Icon pack override failed", e);
+        }
+
         // TODO: Go through LauncherAppsService
         final int iconRes = getActivityInfo().getIconResource();
         Drawable icon = null;
@@ -135,7 +154,9 @@ public class LauncherActivityInfo {
             try {
                 final Resources resources = mPm.getResourcesForApplication(
                         getActivityInfo().applicationInfo);
-                icon = resources.getDrawableForDensity(iconRes, density);
+                // Since this is loading the activity's icon, we use the capped resource API
+                // to apply downsampling protection and prevent OOMs.
+                icon = resources.getDrawableForDensityCapped(iconRes, density, /* theme= */ null);
             } catch (NameNotFoundException | Resources.NotFoundException exc) {
             }
         }

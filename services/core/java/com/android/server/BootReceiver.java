@@ -149,6 +149,11 @@ public class BootReceiver extends BroadcastReceiver {
     private static final int MAX_ERROR_REPORTS = 8;
     private static int sSentReports = 0;
 
+    public boolean fileExists(String fileName) {
+       final File file = new File(fileName);
+        return file.exists();
+    }
+
     // Max tombstone file size to add to dropbox.
     private static final long MAX_TOMBSTONE_SIZE_BYTES =
             DropBoxManagerService.DEFAULT_QUOTA_KB * 1024;
@@ -179,6 +184,7 @@ public class BootReceiver extends BroadcastReceiver {
 
         FileDescriptor tracefd = null;
         try {
+            if (!fileExists(ERROR_REPORT_TRACE_PIPE)) return;
             tracefd = Os.open(ERROR_REPORT_TRACE_PIPE, O_RDONLY, 0600);
         } catch (ErrnoException e) {
             Slog.wtf(TAG, "Could not open " + ERROR_REPORT_TRACE_PIPE, e);
@@ -589,11 +595,15 @@ public class BootReceiver extends BroadcastReceiver {
         if (fileTime <= 0) return false;  // File does not exist
 
         final String filename = file.getPath();
-        if (timestamps.containsKey(filename) && timestamps.get(filename) == fileTime) {
-            return false;  // Already logged this particular file
-        }
+        synchronized (timestamps) {
+            Long prevFileTime = timestamps.get(filename);
+            if (prevFileTime != null && prevFileTime.longValue() == fileTime) {
+                Slog.d(TAG, "already logged " + filename);
+                return false;  // Already logged this particular file
+            }
 
-        timestamps.put(filename, fileTime);
+            timestamps.put(filename, fileTime);
+        }
         return true;
     }
 
@@ -972,7 +982,22 @@ public class BootReceiver extends BroadcastReceiver {
         Slog.i(TAG, "fs_stat, partition:" + partition + " stat:0x" + Integer.toHexString(stat));
     }
 
+    private static HashMap<String, Long> logFileTimestamps;
+
     private static HashMap<String, Long> readTimestamps() {
+        synchronized (sFile) {
+            HashMap<String, Long> res = logFileTimestamps;
+            if (res == null) {
+                // Timestamps file is rewritten after it's modified and there's more than one writer
+                // thread. Read timestamps file at most once to avoid a race condition.
+                res = readTimestampsInner();
+                logFileTimestamps = res;
+            }
+            return res;
+        }
+    }
+
+    private static HashMap<String, Long> readTimestampsInner() {
         synchronized (sFile) {
             HashMap<String, Long> timestamps = new HashMap<String, Long>();
             boolean success = false;

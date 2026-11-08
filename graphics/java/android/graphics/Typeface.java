@@ -56,6 +56,7 @@ import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.util.android.FontController;
 import com.android.internal.util.Preconditions;
 import com.android.text.flags.Flags;
 
@@ -77,6 +78,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -178,7 +180,7 @@ public class Typeface {
      */
     @GuardedBy("SYSTEM_FONT_MAP_LOCK")
     @UnsupportedAppUsage(trackingBug = 123769347)
-    static final Map<String, Typeface> sSystemFontMap = new ArrayMap<>();
+    static final Map<String, Typeface> sSystemFontMap = new HashMap<>();
 
     // DirectByteBuffer object to hold sSystemFontMap's backing memory mapping.
     static ByteBuffer sSystemFontMapBuffer = null;
@@ -290,6 +292,8 @@ public class Typeface {
      * @hide
      */
     public static final String DEFAULT_FAMILY = "sans-serif";
+
+    private static volatile String sFontName = DEFAULT_FAMILY;
 
     static {
         DEFAULT_BOLD = new Typeface(Typeface.BOLD, 700, null);
@@ -964,18 +968,32 @@ public class Typeface {
          */
         public @NonNull Typeface build() {
             final int userFallbackSize = mFamilies.size();
+            final int weight = mStyle == null ? 400 : mStyle.getWeight();
+            final int italic =
+                    (mStyle == null || mStyle.getSlant() == FontStyle.FONT_SLANT_UPRIGHT) ?  0 : 1;
+            final Font firstFont = !mFamilies.isEmpty() && mFamilies.get(0).getSize() > 0
+                    ? mFamilies.get(0).getFont(0) : null;
+            final Typeface override =
+                    FontController.getBundledFontOverride(firstFont, weight, italic == 1);
+            if (override != null) {
+                return override;
+            }
+
             final Typeface fallbackTypeface = getSystemDefaultTypeface(mFallbackName);
             final long[] ptrArray = new long[userFallbackSize];
             for (int i = 0; i < userFallbackSize; ++i) {
                 ptrArray[i] = mFamilies.get(i).getNativePtr();
             }
-            final int weight = mStyle == null ? 400 : mStyle.getWeight();
-            final int italic =
-                    (mStyle == null || mStyle.getSlant() == FontStyle.FONT_SLANT_UPRIGHT) ?  0 : 1;
             return new Typeface(nativeCreateFromArray(
                     ptrArray, fallbackTypeface.getNativeInstance(), weight, italic), null);
         }
     }
+
+    private static final String VARIABLE_FAMILY_PREFIX = "variable-";
+
+    // The families the variable-* families point to, or null to use them as defined.
+    private static volatile String sVariableHeadlineFamily;
+    private static volatile String sVariableBodyFamily;
 
     /**
      * Create a typeface object given a family name, and option style information.
@@ -989,7 +1007,7 @@ public class Typeface {
      * @return The best matching typeface.
      */
     public static Typeface create(String familyName, @Style int style) {
-        return create(getSystemDefaultTypeface(familyName), style);
+        return create(getOverrideTypeface(familyName), style);
     }
 
     /**
@@ -1372,9 +1390,70 @@ public class Typeface {
         mCleaner.run();
     }
 
-    private static Typeface getSystemDefaultTypeface(@NonNull String familyName) {
+    /** @hide */
+    public static Typeface getOverrideTypeface(@NonNull String familyName) {
+        Typeface tf = FontController.getOverrideTypeface(familyName);
+        return tf == null ? getSystemDefaultTypeface(familyName) : tf;
+    }
+
+    /**
+     * Returns the system typeface registered under the given name, or null if there is none.
+     * Unlike {@link #getSystemDefaultTypeface(String)} this never substitutes
+     * {@link #DEFAULT}, so a caller can tell a missing family from the default font.
+     *
+     * @hide
+     */
+    @Nullable
+    public static Typeface getSystemTypeface(@Nullable String familyName) {
+        if (familyName == null) {
+            return null;
+        }
+        synchronized (SYSTEM_FONT_MAP_LOCK) {
+            return sSystemFontMap.get(familyName);
+        }
+    }
+
+    /** @hide */
+    public static Typeface getSystemDefaultTypeface(@NonNull String familyName) {
         Typeface tf = sSystemFontMap.get(familyName);
+        if (familyName != null && familyName.startsWith(VARIABLE_FAMILY_PREFIX)) {
+            final Typeface selected = getSelectedTypeface(familyName, tf);
+            if (selected != null) {
+                return selected;
+            }
+        }
         return tf == null ? Typeface.DEFAULT : tf;
+    }
+
+    /**
+     * Points the Material 3 Expressive {@code variable-*} families at the families of the
+     * selected font, keeping their weights. The display, headline and title families follow
+     * {@code headlineFamily}, and the body and label families follow {@code bodyFamily}.
+     * Passing null for both uses the {@code variable-*} families as defined.
+     *
+     * @hide
+     */
+    public static void setVariableFontFamilies(@Nullable String headlineFamily,
+            @Nullable String bodyFamily) {
+        sVariableHeadlineFamily = headlineFamily;
+        sVariableBodyFamily = bodyFamily;
+    }
+
+    @Nullable
+    private static Typeface getSelectedTypeface(@NonNull String familyName,
+            @Nullable Typeface variable) {
+        final String role = familyName.substring(VARIABLE_FAMILY_PREFIX.length());
+        final String selectedFamily = role.startsWith("body") || role.startsWith("label")
+                ? sVariableBodyFamily : sVariableHeadlineFamily;
+        if (selectedFamily == null) {
+            return null;
+        }
+        final Typeface selected = sSystemFontMap.get(selectedFamily);
+        if (selected == null) {
+            return null;
+        }
+        final int weight = variable != null ? variable.getWeight() : FontStyle.FONT_WEIGHT_NORMAL;
+        return create(selected, weight, false);
     }
 
     /** @hide */
@@ -1574,6 +1653,93 @@ public class Typeface {
         // `Typeface.SANS_SERIF == Typeface.create("sans-serif", Typeface.NORMAL)`)
         // pass, replace the instance in the system font map with the pending Typeface.
         systemFontMap.put(familyName, pending);
+    }
+
+    /** @hide */
+    public static void changeFont() {
+        synchronized (sDynamicCacheLock) {
+            sDynamicTypefaceCache.evictAll();
+        }
+
+        String fontFamily = FontController.getCurrentFontFamily();
+
+        sFontName = fontFamily;
+
+        // Use FontController's fallback resolver to handle family-list
+        // entries (e.g. google-sans-flex) that may not register in
+        // sSystemFontMap by their list name, falling back through known
+        // aliases to Typeface.DEFAULT.
+        Typeface tf = FontController.resolveBaseTypeface();
+
+        Typeface tfBold = create(tf, BOLD);
+        Typeface tfItalic = create(tf, ITALIC);
+        Typeface tfItalicBold = create(tf, BOLD_ITALIC);
+
+        changeDefaultFontForTest(
+                Arrays.asList(
+                        tf, tfBold, tfItalic, tfItalicBold),
+                Arrays.asList(tf, Typeface.SERIF, Typeface.MONOSPACE));
+
+        if (FontController.isDefaultFont(fontFamily)) {
+            retargetStaticDefaults(null, null);
+        } else {
+            retargetStaticDefaults(tf, tfBold);
+        }
+    }
+
+    private static Typeface sOriginalDefault;
+    private static Typeface sOriginalDefaultBold;
+
+    @Nullable
+    private static Typeface resolveConcrete(@Nullable Typeface t) {
+        while (t != null && t.mPendingTypeface != null) {
+            final Typeface next = t.mPendingTypeface.get();
+            if (next == null || next == t) {
+                return null;
+            }
+            t = next;
+        }
+        return t;
+    }
+
+    private void retargetPendingTypeface(@Nullable Typeface target) {
+        if (mPendingTypeface == null) {
+            return;
+        }
+        final Typeface concrete = resolveConcrete(target);
+        // Never point a placeholder at itself or at another placeholder (would loop in
+        // getNativeInstance()).
+        if (concrete == null || concrete == this || concrete.mPendingTypeface != null) {
+            return;
+        }
+        mPendingTypeface.set(concrete);
+    }
+
+    private static void retargetStaticDefaults(@Nullable Typeface regular,
+            @Nullable Typeface bold) {
+        synchronized (SYSTEM_FONT_MAP_LOCK) {
+            if (sOriginalDefault == null) {
+                sOriginalDefault = resolveConcrete(DEFAULT);
+            }
+            if (sOriginalDefaultBold == null) {
+                sOriginalDefaultBold = resolveConcrete(DEFAULT_BOLD);
+            }
+            if (sOriginalDefault == null || sOriginalDefaultBold == null) {
+                return;
+            }
+            final Typeface newRegular = regular != null ? regular : sOriginalDefault;
+            final Typeface newBold = bold != null ? bold : sOriginalDefaultBold;
+            DEFAULT.retargetPendingTypeface(newRegular);
+            if (SANS_SERIF != DEFAULT) {
+                SANS_SERIF.retargetPendingTypeface(newRegular);
+            }
+            DEFAULT_BOLD.retargetPendingTypeface(newBold);
+        }
+    }
+
+    /** @hide */
+    public static String getFontName() {
+        return sFontName;
     }
 
     /** @hide */

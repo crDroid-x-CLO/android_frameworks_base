@@ -764,6 +764,9 @@ public final class PowerManagerService extends SystemService
     // True if always on display is enabled
     private boolean mAlwaysOnEnabled;
 
+    // True if always on charging is enabled
+    private boolean mAlwaysOnChargingEnabled;
+
     // True if double tap to wake is enabled
     private boolean mDoubleTapWakeEnabled;
 
@@ -1290,6 +1293,9 @@ public final class PowerManagerService extends SystemService
     private static native boolean nativeSetPowerMode(int mode, boolean enabled);
     private static native boolean nativeForceSuspend();
 
+    // overrule and disable brightness for buttons
+    private boolean mHardwareKeysDisable = false;
+
     // Whether proximity check on wake is enabled by default
     private boolean mProximityWakeEnabledByDefaultConfig;
 
@@ -1649,6 +1655,9 @@ public final class PowerManagerService extends SystemService
                 Settings.Secure.DOZE_ALWAYS_ON),
                 false, mSettingsObserver, UserHandle.USER_ALL);
         resolver.registerContentObserver(Settings.Secure.getUriFor(
+                Settings.Secure.DOZE_ON_CHARGE),
+                false, mSettingsObserver, UserHandle.USER_ALL);
+        resolver.registerContentObserver(Settings.Secure.getUriFor(
                 Settings.Secure.DOUBLE_TAP_TO_WAKE),
                 false, mSettingsObserver, UserHandle.USER_ALL);
         resolver.registerContentObserver(Settings.Global.getUriFor(
@@ -1673,6 +1682,9 @@ public final class PowerManagerService extends SystemService
                 false, mSettingsObserver, UserHandle.USER_ALL);
         resolver.registerContentObserver(LineageSettings.Secure.getUriFor(
                 LineageSettings.Secure.KEYBOARD_BRIGHTNESS),
+                false, mSettingsObserver, UserHandle.USER_ALL);
+        resolver.registerContentObserver(Settings.System.getUriFor(
+                Settings.System.HARDWARE_KEYS_DISABLE),
                 false, mSettingsObserver, UserHandle.USER_ALL);
 
         // Register for broadcasts from other components of the system.
@@ -1797,7 +1809,9 @@ public final class PowerManagerService extends SystemService
         mWakeUpWhenPluggedOrUnpluggedSetting = LineageSettings.Global.getInt(resolver,
                 LineageSettings.Global.WAKE_WHEN_PLUGGED_OR_UNPLUGGED,
                 (mWakeUpWhenPluggedOrUnpluggedConfig ? 1 : 0)) == 1;
-        mAlwaysOnEnabled = mAmbientDisplayConfiguration.alwaysOnEnabled(UserHandle.USER_CURRENT);
+        mAlwaysOnEnabled = mAmbientDisplayConfiguration.alwaysOnEnabledSetting(UserHandle.USER_CURRENT);
+        mAlwaysOnChargingEnabled = mAmbientDisplayConfiguration.alwaysOnChargingEnabledSetting(
+                    UserHandle.USER_CURRENT);
 
         if (mSupportsDoubleTapWakeConfig) {
             boolean doubleTapWakeEnabled = Settings.Secure.getIntForUser(resolver,
@@ -1831,6 +1845,10 @@ public final class PowerManagerService extends SystemService
         mKeyboardBrightness = LineageSettings.Secure.getFloatForUser(resolver,
                 LineageSettings.Secure.KEYBOARD_BRIGHTNESS, mKeyboardBrightnessDefault,
                 UserHandle.USER_CURRENT);
+
+        mHardwareKeysDisable = Settings.System.getIntForUser(resolver,
+                Settings.System.HARDWARE_KEYS_DISABLE, 0,
+                UserHandle.USER_CURRENT) != 0;
 
         mDirty |= DIRTY_SETTINGS;
     }
@@ -3125,6 +3143,11 @@ public final class PowerManagerService extends SystemService
             return false;
         }
 
+        // On Always On Charging, SystemUI shows the charging indicator
+        if (mAlwaysOnChargingEnabled && mIsPowered && getGlobalWakefulnessLocked() == WAKEFULNESS_DOZING) {
+            return false;
+        }
+
         // Otherwise wake up!
         return true;
     }
@@ -3424,15 +3447,17 @@ public final class PowerManagerService extends SystemService
                         if (wakefulness == WAKEFULNESS_AWAKE) {
                             if (mButtonsLight != null) {
                                 float buttonBrightness = BRIGHTNESS_OFF_FLOAT;
-                                if (isValidBrightness(
-                                        mButtonBrightnessOverrideFromWindowManager)) {
-                                    if (mButtonBrightnessOverrideFromWindowManager >
-                                            PowerManager.BRIGHTNESS_MIN) {
-                                        buttonBrightness =
-                                                mButtonBrightnessOverrideFromWindowManager;
+                                if (!mHardwareKeysDisable) {
+                                    if (isValidBrightness(
+                                            mButtonBrightnessOverrideFromWindowManager)) {
+                                        if (mButtonBrightnessOverrideFromWindowManager >
+                                                PowerManager.BRIGHTNESS_MIN) {
+                                            buttonBrightness =
+                                                    mButtonBrightnessOverrideFromWindowManager;
+                                        }
+                                    } else if (isValidButtonBrightness(mButtonBrightness)) {
+                                        buttonBrightness = mButtonBrightness;
                                     }
-                                } else if (isValidButtonBrightness(mButtonBrightness)) {
-                                    buttonBrightness = mButtonBrightness;
                                 }
 
                                 if (!mButtonLightOnKeypressOnly) {
@@ -4094,7 +4119,8 @@ public final class PowerManagerService extends SystemService
 
         // Stop dream.
         if (isDreaming && mDreamManager != null) {
-            mDreamManager.stopDream(/* immediate= */ false, "power manager request" /*reason*/);
+            mDreamManager.stopDreamWithoutWaking(/* immediate= */ false,
+                    "power manager request" /*reason*/);
         }
     }
 

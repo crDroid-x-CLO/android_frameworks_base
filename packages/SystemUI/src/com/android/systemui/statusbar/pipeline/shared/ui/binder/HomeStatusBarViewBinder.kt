@@ -20,7 +20,9 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.app.WindowConfiguration
 import android.content.ContentResolver
+import android.content.Context
 import android.database.ContentObserver
+import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -32,6 +34,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.app.animation.Interpolators
 import com.android.systemui.clock.ClockModernization
+import com.android.systemui.crdroid.batterybar.BatteryBarController
+import com.android.systemui.crdroid.logo.LogoImage
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.res.R
@@ -84,8 +88,13 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
         val autoHide: Boolean,
         val denyListed: Boolean,
         val hideForHun: Boolean,
+        val chipStyle: Int,
         val position: Int,
         val visibilityModel: VisibilityModel,
+    )
+
+    private data class Padding(
+        val start: Int, val top: Int, val end: Int, val bottom: Int,
     )
 
     override fun bind(
@@ -106,11 +115,20 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
         val notificationIconsArea = view.requireViewById<View>(R.id.notificationIcons)
         val batteryView = view.findViewById<View>(R.id.battery_composable_view)
 
+        val leftPaddingInit = leftClock.capturePadding()
+        val centerPaddingInit = centerClock?.capturePadding()
+        val rightPaddingInit = rightClock?.capturePadding()
+
+        val batteryBar: BatteryBarController = view.requireViewById(R.id.battery_bar)
+        val leftLogo: LogoImage = view.requireViewById(R.id.statusbar_logo)
+
         // GONE because this shouldn't take space in the layout
         systemInfoView.hideInitially()
         leftClock.hideInitially(state = View.GONE)
         centerClock?.hideInitially(state = View.GONE)
         rightClock?.hideInitially(state = View.GONE)
+        batteryBar.hideInitially()
+        leftLogo.hideInitially()
         notificationIconsArea.hideInitially()
 
         view.repeatWhenAttached {
@@ -124,6 +142,7 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                             autoHide = false,
                             denyListed = false,
                             hideForHun = false,
+                            chipStyle = 0,
                             position = context.contentResolver.readClockPosition(),
                             visibilityModel = VisibilityModel(View.GONE, true),
                         )
@@ -137,6 +156,8 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                     Settings.Secure.getUriFor(StatusBarIconController.ICON_HIDE_LIST)
                 val statusBarClockUri: Uri =
                     LineageSettings.System.getUriFor(LineageSettings.System.STATUS_BAR_CLOCK)
+                val statusBarClockChipUri: Uri =
+                    Settings.System.getUriFor(Settings.System.STATUSBAR_CLOCK_CHIP)
 
                 val taskStackListener =
                     object : TaskStackChangeListener {
@@ -203,13 +224,23 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                                         current.copy(
                                             position = context.contentResolver.readClockPosition()
                                         )
+                                    statusBarClockChipUri -> {
+                                        val chipStyle =
+                                            Settings.System.getIntForUser(context.contentResolver,
+                                                Settings.System.STATUSBAR_CLOCK_CHIP, 0,
+                                                UserHandle.USER_CURRENT
+                                            )
+                                        current.copy(
+                                            chipStyle = chipStyle
+                                        )
+                                    }
                                     else -> current
                                 }
                             }
                         }
                     }
 
-                val urisToObserve = listOf(clockAutoHideUri, iconHideListUri, statusBarClockUri)
+                val urisToObserve = listOf(clockAutoHideUri, iconHideListUri, statusBarClockUri, statusBarClockChipUri)
                 urisToObserve.forEach { uri ->
                     context.contentResolver.registerContentObserver(
                         uri,
@@ -312,6 +343,9 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                     }
 
                     launch {
+                        var lastChipStyle: Int? = null
+                        var lastClockPosition: Int? = null
+
                         clockState.collect { state ->
                             // We only want to hide left clock for HUN
                             val hunBlocksClock =
@@ -331,7 +365,7 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                                 }
 
                             // Pick active clock view
-                            val activeClock: Clock? =
+                            val activeClock: Clock =
                                 when (state.position) {
                                     CLOCK_POSITION_CENTER -> centerClock ?: leftClock
                                     CLOCK_POSITION_RIGHT -> rightClock ?: leftClock
@@ -345,7 +379,26 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                             rightClock?.visibility = View.GONE
 
                             // Show only the active one
-                            activeClock?.adjustVisibility(finalVisibility)
+                            activeClock.adjustVisibility(finalVisibility)
+
+                            // Only touch chip UI when needed
+                            val chipNeedsUpdate = (lastChipStyle != state.chipStyle)
+                                        || (lastClockPosition != state.position)
+                            if (chipNeedsUpdate) {
+                                applyClockChip(
+                                    context = context,
+                                    chipStyle = state.chipStyle,
+                                    activeClock = activeClock,
+                                    leftClock = leftClock,
+                                    centerClock = centerClock,
+                                    rightClock = rightClock,
+                                    leftPaddingInit = leftPaddingInit,
+                                    centerPaddingInit = centerPaddingInit,
+                                    rightPaddingInit = rightPaddingInit
+                                )
+                                lastChipStyle = state.chipStyle
+                                lastClockPosition = state.position
+                            }
                         }
                     }
                 }
@@ -353,6 +406,8 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                 launch {
                     viewModel.isNotificationIconContainerVisible.collect {
                         notificationIconsArea.adjustVisibility(it)
+                        batteryBar.adjustVisibility(it)
+                        leftLogo.adjustVisibility(it)
                     }
                 }
 
@@ -463,6 +518,85 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
         } else {
             this.hide(model.visibility, model.shouldAnimateChange)
         }
+    }
+
+    private fun View.capturePadding() = Padding(paddingStart, paddingTop, paddingEnd, paddingBottom)
+
+    private fun dpToPx(context: Context, dp: Int): Int {
+        return (dp * context.resources.displayMetrics.density).toInt()
+    }
+
+    private fun applyClockChip(
+        context: Context,
+        chipStyle: Int,
+        activeClock: Clock,
+        leftClock: Clock,
+        centerClock: Clock?,
+        rightClock: Clock?,
+        leftPaddingInit: Padding,
+        centerPaddingInit: Padding?,
+        rightPaddingInit: Padding?
+    ) {
+        fun reset(clock: Clock?, padding: Padding?) {
+            if (clock == null || padding == null) return
+            clock.setBackgroundResource(0)
+            clock.setPaddingRelative(padding.start, padding.top, padding.end, padding.bottom)
+            // Reset text color - Clock will handle it via DarkIconDispatcher
+        }
+
+        fun apply(clock: Clock, style: Int) {
+            val clockBackgrounds = listOf(
+                R.drawable.sb_date_bg1,
+                R.drawable.sb_date_bg2,
+                R.drawable.sb_date_bg3,
+                R.drawable.sb_date_bg4,
+                R.drawable.sb_date_bg5,
+                R.drawable.sb_date_bg6,
+                R.drawable.sb_date_bg7,
+                R.drawable.sb_date_bg8,
+                R.drawable.sb_date_bg9,
+                R.drawable.sb_date_bg10,
+                R.drawable.sb_date_bg11,
+                R.drawable.sb_date_bg12
+            )
+            
+            if (style < 1 || style > clockBackgrounds.size) {
+                clock.setStaticColor(false)
+                return
+            }
+            
+            val chipTopBottomPadding = context.resources.getDimensionPixelSize(
+                R.dimen.status_bar_clock_chip_tb_padding)
+            val chipLeftRightPadding = context.resources.getDimensionPixelSize(
+                R.dimen.status_bar_clock_chip_lr_padding)
+            
+            clock.setBackgroundResource(clockBackgrounds[style - 1])
+            clock.setPadding(
+                chipLeftRightPadding, 
+                chipTopBottomPadding, 
+                chipLeftRightPadding, 
+                chipTopBottomPadding
+            )
+            clock.setTextAlignment(View.TEXT_ALIGNMENT_CENTER)
+            // Set text color to white for visibility on filled chip backgrounds
+            // Styles 2 and 8 are outline-only (transparent background), so use normal color
+            if (style != 2 && style != 8) {
+                clock.setStaticColor(true)
+                clock.setTextColor(Color.WHITE)
+            } else {
+                clock.setStaticColor(false)
+            }
+            // For outline styles (2, 8), let Clock's DarkIconDispatcher handle the color
+        }
+
+        // Always reset first so the previous active clock loses chip when position changes
+        reset(leftClock, leftPaddingInit)
+        reset(centerClock, centerPaddingInit)
+        reset(rightClock, rightPaddingInit)
+
+        if (chipStyle == 0) return
+
+        apply(activeClock, chipStyle)
     }
 
     /**

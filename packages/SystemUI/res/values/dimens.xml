@@ -209,6 +209,10 @@
         match the core/status_bar_system_icon_size and change to sp unit -->
     <dimen name="status_bar_mobile_signal_size">15sp</dimen>
     <dimen name="status_bar_mobile_signal_size_updated">12sp</dimen>
+    <dimen name="status_bar_signal_overlay_width">17dp</dimen>
+    <dimen name="status_bar_signal_overlay_height">12dp</dimen>
+    <dimen name="status_bar_wifi_overlay_width">17dp</dimen>
+    <dimen name="status_bar_wifi_overlay_height">12.58dp</dimen>
 
     <!-- Size of the view displaying the mobile signal icon in the status bar. This value should
         match the viewport height of mobile signal drawables such as ic_lte_mobiledata
@@ -380,7 +384,7 @@
     <dimen name="keyguard_indication_bottom_padding">16sp</dimen>
 
     <!-- The padding at start and end of indication text shown on AOD -->
-    <dimen name="keyguard_indication_text_padding">16dp</dimen>
+    <dimen name="keyguard_indication_text_padding">12dp</dimen>
 
     <!-- The min height on the indication text shown on AOD -->
     <dimen name="keyguard_indication_text_min_height">48dp</dimen>
@@ -454,9 +458,9 @@
 
     <!-- paddings for container with status icons and battery -->
     <!-- padding start is a bit smaller than end to account for status icon margin-->
-    <dimen name="status_bar_icons_padding_start">3dp</dimen>
+    <dimen name="status_bar_icons_padding_start">0dp</dimen>
 
-    <dimen name="status_bar_icons_padding_end">4dp</dimen>
+    <dimen name="status_bar_icons_padding_end">0dp</dimen>
     <dimen name="status_bar_icons_padding_bottom">0dp</dimen>
     <dimen name="status_bar_icons_padding_top">0dp</dimen>
 
@@ -867,9 +871,9 @@
          split shade on keyguard-->
     <dimen name="keyguard_split_shade_top_margin">68dp</dimen>
     <!-- The margin between the status view and the notifications on Keyguard.-->
-    <dimen name="keyguard_status_view_bottom_margin">20dp</dimen>
+    <dimen name="keyguard_status_view_bottom_margin">16dp</dimen>
     <!-- Minimum margin between clock and status bar -->
-    <dimen name="keyguard_clock_top_margin">18dp</dimen>
+    <dimen name="keyguard_clock_top_margin">16dp</dimen>
     <!-- The amount to shift the clocks during a small/large transition -->
     <dimen name="keyguard_clock_switch_y_shift">14dp</dimen>
 
@@ -942,7 +946,7 @@
     <dimen name="kg_framed_avatar_size">32dp</dimen>
 
     <!-- Margin on the left side of the carrier text on Keyguard -->
-    <dimen name="keyguard_carrier_text_margin">16dp</dimen>
+    <dimen name="keyguard_carrier_text_margin">@dimen/status_bar_padding_start</dimen>
 
     <!-- Additional translation (downwards) for appearing notifications when going to the full shade
          from Keyguard. -->
@@ -1079,7 +1083,7 @@
     <dimen name="default_gear_space">18dp</dimen>
 
     <!-- Global actions power menu -->
-    <dimen name="global_actions_translate">9dp</dimen>
+    <dimen name="global_actions_translate">0dp</dimen>
 
     <!-- Distance from the top of screen in pixels, to position the power menu near the button. -->
     <dimen name="global_actions_top_padding">330px</dimen>

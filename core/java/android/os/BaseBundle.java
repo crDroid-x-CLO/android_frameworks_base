@@ -521,6 +521,13 @@ public class BaseBundle implements Parcel.ClassLoaderProvider {
             } else {
                 throw e;
             }
+        } catch (RuntimeException e) {
+            if (sShouldDefuse && (e.getCause() instanceof ClassNotFoundException)) {
+                Log.w(TAG, "Failed to parse Bundle, but defusing quietly", e);
+                map.erase();
+            } else {
+                throw e;
+            }
         } finally {
             mWeakParcelledData = null;
             if (ownsParcel) {
@@ -550,6 +557,19 @@ public class BaseBundle implements Parcel.ClassLoaderProvider {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public boolean isParcelled() {
         return mParcelledData != null;
+    }
+
+    /**
+     * Return the size of {@link #mParcelledData} in bytes if available, otherwise {@code 0}.
+     *
+     * @hide
+     */
+    public int getSize() {
+        if (mParcelledData != null) {
+            return mParcelledData.dataSize();
+        } else {
+            return 0;
+        }
     }
 
     /**

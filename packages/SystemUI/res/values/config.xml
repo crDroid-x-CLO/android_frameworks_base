@@ -85,7 +85,7 @@
 
     <!-- The default tiles to display in QuickSettings after the internet tile split-->
     <string name="quick_settings_tiles_default_split" translatable="false">
-        wifi,bt,cell,cast,dnd,wallet,airplane,rotation,flashlight,battery,alarm,controls,screenrecord
+        wifi,bt,cell,nfc,cast,dnd,wallet,airplane,rotation,flashlight,battery,alarm,controls,screenrecord
     </string>
 
     <!-- The default large tiles in Quick Settings after the internet tile split -->
@@ -93,9 +93,9 @@
         <item>wifi</item>
         <item>bt</item>
         <item>cell</item>
+        <item>nfc</item>
         <item>cast</item>
         <item>dnd</item>
-        <item>wallet</item>
     </string-array>
     <!-- The class path of the Safety Quick Settings Tile -->
     <string name="safety_quick_settings_tile_class" translatable="false">
@@ -107,7 +107,7 @@
 
     <!-- Tiles native to System UI. Order should match "quick_settings_tiles_default" -->
     <string name="quick_settings_tiles_stock" translatable="false">
-        internet,wifi,bt,flashlight,dnd,modes_dnd,alarm,airplane,nfc,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness,qr_code_scanner,onehanded,color_correction,font_scaling,record_issue,hearing_devices,notes,desktopeffects,cell,ambient_display,aod,caffeine,heads_up,powershare,profiles,reading_mode,sync,usb_tether,vpn
+        internet,wifi,bt,flashlight,dnd,modes_dnd,alarm,airplane,nfc,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness,qr_code_scanner,onehanded,color_correction,font_scaling,record_issue,hearing_devices,notes,desktopeffects,cell,ambient_display,aod,caffeine,heads_up,powershare,profiles,reading_mode,sync,usb_tether,vpn,onthego,sound,cpuinfo,fpsinfo,compass,dataswitch,volume_panel,smart_pixels,weather,refresh_rate,screenshot,locale,dns,preferred_network,vpn_tethering,blur
     </string>
 
     <!-- The tiles to display in QuickSettings -->

@@ -3028,7 +3028,7 @@ public abstract class ViewGroup extends View implements ViewParent, ViewManager 
      * Returns true if the flag was previously set.
      */
     private static boolean resetCancelNextUpFlag(@NonNull View view) {
-        if ((view.mPrivateFlags & PFLAG_CANCEL_NEXT_UP_EVENT) != 0) {
+        if (view != null && (view.mPrivateFlags & PFLAG_CANCEL_NEXT_UP_EVENT) != 0) {
             view.mPrivateFlags &= ~PFLAG_CANCEL_NEXT_UP_EVENT;
             return true;
         }
@@ -4117,7 +4117,9 @@ public abstract class ViewGroup extends View implements ViewParent, ViewManager 
         final int count = mChildrenCount;
         final View[] children = mChildren;
         for (int i = 0; i < count; i++) {
-            children[i].dispatchDetachedFromWindow();
+            if (children[i] != null) {
+                children[i].dispatchDetachedFromWindow();
+            }
         }
         clearDisappearingChildren();
         final int transientCount = mTransientViews == null ? 0 : mTransientIndices.size();
@@ -4457,6 +4459,12 @@ public abstract class ViewGroup extends View implements ViewParent, ViewManager 
 
             final int childIndex = getAndVerifyPreorderedIndex(childrenCount, i, customOrder);
             final View child = getAndVerifyPreorderedView(preorderedList, children, childIndex);
+            if (child == null) {
+                Log.e(View.VIEW_LOG_TAG, "dispatchDraw: child view is null"
+                        + " curIndex=" + i + ", pkg =" +  mContext.getPackageName()
+                        + " mChildrenCount=" + mChildrenCount);
+                return;
+            }
             if ((child.mViewFlags & VISIBILITY_MASK) == VISIBLE || child.getAnimation() != null) {
                 more |= drawChild(canvas, child, drawingTime);
             }

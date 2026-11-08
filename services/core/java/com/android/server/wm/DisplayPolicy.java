@@ -112,6 +112,7 @@ import android.app.ActivityThread;
 import android.app.LoadedApk;
 import android.app.ResourcesManager;
 import android.app.WindowConfiguration;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
@@ -119,6 +120,7 @@ import android.content.res.Resources;
 // QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
 import android.content.pm.ApplicationInfo;
 // QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+import android.database.ContentObserver;
 import android.graphics.Insets;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
@@ -137,11 +139,13 @@ import android.os.UserHandle;
 // QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
 import android.util.BoostFramework;
 // QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+import android.provider.Settings;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.proto.ProtoOutputStream;
+import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.InsetsFlags;
 import android.view.InsetsFrameProvider;
@@ -169,6 +173,7 @@ import com.android.internal.policy.ForceShowNavBarSettingsObserver;
 import com.android.internal.policy.GestureNavigationSettingsObserver;
 import com.android.internal.protolog.ProtoLog;
 import com.android.internal.statusbar.LetterboxDetails;
+import com.android.internal.util.crdroid.Utils;
 import com.android.internal.util.function.TriFunction;
 import com.android.internal.view.AppearanceRegion;
 import com.android.internal.widget.PointerLocationView;
@@ -181,6 +186,8 @@ import com.android.server.policy.WindowManagerPolicy.WindowManagerFuncs;
 import com.android.server.statusbar.StatusBarManagerInternal;
 import com.android.server.wallpaper.WallpaperManagerInternal;
 import com.android.wm.shell.Flags;
+
+import lineageos.providers.LineageSettings;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -309,6 +316,7 @@ public class DisplayPolicy {
 
     private volatile boolean mHasStatusBar;
     private volatile boolean mHasNavigationBar;
+    private volatile boolean mTaskBarEnabled;
     // Can the navigation bar ever move to the side?
     private volatile boolean mNavigationBarCanMove;
     private volatile boolean mNavigationBarAlwaysShowOnSideGesture;
@@ -451,6 +459,8 @@ public class DisplayPolicy {
 
     private RefreshRatePolicy mRefreshRatePolicy;
 
+    private SettingsObserver mSettingsObserver;
+
     /**
      * If true, attach the navigation bar to the current transition app.
      * The value is read from config_attachNavBarToAppDuringTransition and could be overlaid by RRO
@@ -468,6 +478,8 @@ public class DisplayPolicy {
 
     private final ForceShowNavBarSettingsObserver mForceShowNavBarSettingsObserver;
     private boolean mForceShowNavigationBarEnabled;
+
+    private volatile boolean mGamingGestureLocked;
 
     private class PolicyHandler extends Handler {
 
@@ -540,6 +552,27 @@ public class DisplayPolicy {
     }
 
 // QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+    private class SettingsObserver extends ContentObserver {
+        public SettingsObserver(Handler handler) {
+            super(handler);
+
+            ContentResolver resolver = mContext.getContentResolver();
+            resolver.registerContentObserver(LineageSettings.System.getUriFor(
+                    LineageSettings.System.FORCE_SHOW_NAVBAR), false, this,
+                    UserHandle.USER_ALL);
+            resolver.registerContentObserver(LineageSettings.System.getUriFor(
+                    LineageSettings.System.ENABLE_TASKBAR), false, this,
+                    UserHandle.USER_ALL);
+
+            updateSettings();
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            updateSettings();
+        }
+    }
+
     DisplayPolicy(WindowManagerService service, DisplayContent displayContent) {
         mService = service;
         mContext = displayContent.isDefaultDisplay ? service.mContext
@@ -607,6 +640,9 @@ public class DisplayPolicy {
 
                 @Override
                 public void onSwipeFromTop() {
+                    if (isGamingGestureLocked()) {
+                        return;
+                    }
                     synchronized (mLock) {
                         requestTransientBars(mTopGestureHost,
                                 getControllableInsets(mTopGestureHost).top > 0);
@@ -615,6 +651,9 @@ public class DisplayPolicy {
 
                 @Override
                 public void onSwipeFromBottom() {
+                    if (isGamingGestureLocked()) {
+                        return;
+                    }
                     synchronized (mLock) {
                         requestTransientBars(mBottomGestureHost,
                                 getControllableInsets(mBottomGestureHost).bottom > 0);
@@ -622,12 +661,18 @@ public class DisplayPolicy {
                 }
 
                 private boolean allowsSideSwipe(Region excludedRegion) {
+                    if (isGamingGestureLocked()) {
+                        return false;
+                    }
                     return mNavigationBarAlwaysShowOnSideGesture
                             && !mSystemGestures.currentGestureStartedInRegion(excludedRegion);
                 }
 
                 @Override
                 public void onSwipeFromRight() {
+                    if (isGamingGestureLocked()) {
+                        return;
+                    }
                     final Region excludedRegion = Region.obtain();
                     synchronized (mLock) {
                         mDisplayContent.calculateSystemGestureExclusion(
@@ -643,6 +688,9 @@ public class DisplayPolicy {
 
                 @Override
                 public void onSwipeFromLeft() {
+                    if (isGamingGestureLocked()) {
+                        return;
+                    }
                     final Region excludedRegion = Region.obtain();
                     synchronized (mLock) {
                         mDisplayContent.calculateSystemGestureExclusion(
@@ -963,16 +1011,10 @@ public class DisplayPolicy {
 
         if (mDisplayContent.isDefaultDisplay) {
             mHasStatusBar = true;
-            mHasNavigationBar = mContext.getResources().getBoolean(R.bool.config_showNavigationBar);
 
-            // Allow a system property to override this. Used by the emulator.
-            // See also hasNavigationBar().
-            String navBarOverride = SystemProperties.get("qemu.hw.mainkeys");
-            if ("1".equals(navBarOverride)) {
-                mHasNavigationBar = false;
-            } else if ("0".equals(navBarOverride)) {
-                mHasNavigationBar = true;
-            }
+            // Register content observer only for main display
+            mSettingsObserver = new SettingsObserver(mHandler);
+            updateSettings();
         } else {
             mHasStatusBar = false;
             mHasNavigationBar = mDisplayContent.isSystemDecorationsSupported();
@@ -1003,6 +1045,20 @@ public class DisplayPolicy {
         mForceShowNavBarSettingsObserver.setOnChangeRunnable(this::updateForceShowNavBarSettings);
         mForceShowNavigationBarEnabled = mForceShowNavBarSettingsObserver.isEnabled();
         mHandler.post(mForceShowNavBarSettingsObserver::register);
+
+        ContentResolver resolver = mContext.getContentResolver();
+        mGamingGestureLocked = Settings.Secure.getIntForUser(resolver,
+                "ax_gaming_gesture_lock", 0, UserHandle.USER_CURRENT) == 1;
+        ContentObserver gestureLockObserver = new ContentObserver(mHandler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                mGamingGestureLocked = Settings.Secure.getIntForUser(
+                        mContext.getContentResolver(),
+                        "ax_gaming_gesture_lock", 0, UserHandle.USER_CURRENT) == 1;
+            }
+        };
+        resolver.registerContentObserver(Settings.Secure.getUriFor(
+                "ax_gaming_gesture_lock"), false, gestureLockObserver, UserHandle.USER_ALL);
     }
 
     private void updateForceShowNavBarSettings() {
@@ -1020,6 +1076,21 @@ public class DisplayPolicy {
         if (mService.mPointerLocationEnabled) {
             setPointerLocationEnabled(true);
         }
+    }
+
+    public void updateSettings() {
+        ContentResolver resolver = mContext.getContentResolver();
+
+        mHasNavigationBar = LineageSettings.System.getIntForUser(resolver,
+                LineageSettings.System.FORCE_SHOW_NAVBAR, Utils.hasNavbarByDefault(mContext) ? 1 : 0,
+                UserHandle.USER_CURRENT) != 0;
+        mTaskBarEnabled = LineageSettings.System.getIntForUser(resolver,
+                LineageSettings.System.ENABLE_TASKBAR, isTablet() ? 1 : 0,
+                UserHandle.USER_CURRENT) != 0;
+    }
+    
+    private boolean isTablet() {
+        return getCurrentUserResources().getConfiguration().smallestScreenWidthDp >= 600;
     }
 
     private int getDisplayId() {
@@ -1067,6 +1138,10 @@ public class DisplayPolicy {
 
     public int getDockMode() {
         return mDockMode;
+    }
+
+    public boolean isGamingGestureLocked() {
+        return mGamingGestureLocked;
     }
 
     public boolean hasNavigationBar() {
@@ -2184,10 +2259,12 @@ public class DisplayPolicy {
                 R.bool.config_remoteInsetsControllerControlsSystemBars);
 
         updateConfigurationAndScreenSizeDependentBehaviors();
+        
+        final boolean isMobileTaskbarEnabled = !isTablet() && mTaskBarEnabled;
 
         final boolean shouldAttach =
                 res.getBoolean(R.bool.config_attachNavBarToAppDuringTransition)
-                        && !Flags.enableTinyTaskbar();
+                        && !isMobileTaskbarEnabled;
         if (mShouldAttachNavBarToAppDuringTransition != shouldAttach) {
             mShouldAttachNavBarToAppDuringTransition = shouldAttach;
         }
@@ -2712,6 +2789,9 @@ public class DisplayPolicy {
     @VisibleForTesting
     void requestTransientBars(WindowState swipeTarget, boolean isGestureOnSystemBar) {
         if (com.android.window.flags.Flags.enableTransientGestureInSystemUi()) {
+            return;
+        }
+        if (isGamingGestureLocked()) {
             return;
         }
         if (swipeTarget == null || !mService.mPolicy.isUserSetupComplete()) {

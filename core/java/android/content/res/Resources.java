@@ -45,6 +45,7 @@ import android.app.Application;
 import android.app.LocaleConfig;
 import android.app.ResourcesManager;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ActivityInfo.Config;
@@ -76,7 +77,6 @@ import android.view.WindowManager;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.GrowingArrayUtils;
 import com.android.internal.util.Preconditions;
 import com.android.internal.util.XmlUtils;
@@ -248,6 +248,47 @@ public class Resources {
                 mSystem = ret;
             }
             return ret;
+        }
+    }
+
+    /** @hide */
+    @Nullable
+    public Drawable getIconPackOverride(
+            @NonNull String packageName, @NonNull String className, int density) {
+        try {
+            ThemeEngine themeEngine = ThemeEngine.getInstance();
+            if (themeEngine == null) return null;
+            ComponentName cn = new ComponentName(packageName, className);
+            return themeEngine.getIconPackDrawable(cn, density);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** @hide */
+    @Nullable
+    public Drawable getIconPackOverride(
+            @NonNull String packageName, @NonNull String className) {
+        return getIconPackOverride(packageName, className, 0);
+    }
+
+    /** @hide */
+    public boolean hasActiveIconPack() {
+        try {
+            ThemeEngine themeEngine = ThemeEngine.getInstance();
+            return themeEngine != null && themeEngine.hasActiveIconPack();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** @hide */
+    public String getIconPackPackage() {
+        try {
+            ThemeEngine themeEngine = ThemeEngine.getInstance();
+            return themeEngine != null ? themeEngine.getIconPackPackage() : null;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -501,11 +542,11 @@ public class Resources {
             if (typeface != null) {
                 return typeface;
             }
+        } catch (Exception e) {
         } finally {
             releaseTempTypedValue(value);
         }
-        throw new NotFoundException("Font resource ID #0x"
-                + Integer.toHexString(id));
+        return Typeface.SANS_SERIF;
     }
 
     @NonNull
@@ -959,6 +1000,32 @@ public class Resources {
     }
 
     /**
+     * Return a drawable object associated with a particular resource ID and styled for the
+     * specified theme for a given screen density, applying a cap to prevent excessively large
+     * dimensions.
+     *
+     * @param id The desired resource identifier.
+     * @param density The desired screen density in DPI.
+     * @param theme The theme used to style the drawable attributes, may be {@code null}.
+     * @return Drawable An object that can be used to draw this resource.
+     * @throws NotFoundException Throws NotFoundException if the given ID does not exist.
+     * @hide
+     */
+    @Nullable
+    public Drawable getDrawableForDensityCapped(@DrawableRes int id, int density,
+            @Nullable Theme theme)
+            throws NotFoundException {
+        final TypedValue value = obtainTempTypedValue();
+        try {
+            final ResourcesImpl impl = mResourcesImpl;
+            impl.getValueForDensity(id, density, value, true);
+            return impl.loadDrawable(this, value, id, density, theme, /* isCapped= */ true);
+        } finally {
+            releaseTempTypedValue(value);
+        }
+    }
+
+    /**
      * Return a drawable object associated with a particular resource ID for the
      * given screen density in DPI. This will set the drawable's density to be
      * the device's density multiplied by the ratio of actual drawable density
@@ -1026,7 +1093,29 @@ public class Resources {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     Drawable loadDrawable(@NonNull TypedValue value, int id, int density, @Nullable Theme theme)
             throws NotFoundException {
+        return loadDrawableInternal(value, id, density, theme);
+    }
+
+    /** @hide */
+    @NonNull
+    public Drawable loadDrawableInternal(@NonNull TypedValue value, int id, int density,
+            @Nullable Theme theme) throws NotFoundException {
         return mResourcesImpl.loadDrawable(this, value, id, density, theme);
+    }
+
+    /** @hide */
+    @Nullable
+    public Drawable getDrawableInternal(@DrawableRes int id) {
+        final TypedValue value = obtainTempTypedValue();
+        try {
+            final ResourcesImpl impl = mResourcesImpl;
+            impl.getValueForDensity(id, 0, value, true);
+            return loadDrawableInternal(value, id, 0, null);
+        } catch (Exception e) {
+            return null;
+        } finally {
+            releaseTempTypedValue(value);
+        }
     }
 
     /**

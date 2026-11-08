@@ -324,6 +324,13 @@ public class ScreenDecorations implements
         });
     }
 
+    private DisplayDecorationSupport getHwcScreenDecorationSupport() {
+        if (mContext.getResources().getBoolean(R.bool.config_disableHwcScreenDecoration)) {
+            return null;
+        }
+        return mContext.getDisplay().getDisplayDecorationSupport();
+    }
+
     private static boolean eq(DisplayDecorationSupport a, DisplayDecorationSupport b) {
         if (a == null) return (b == null);
         if (b == null) return false;
@@ -515,7 +522,7 @@ public class ScreenDecorations implements
         mDebugRoundedCornerFactory =
                 new RoundedCornerDecorProviderFactory(mDebugRoundedCornerDelegate);
         mCutoutFactory = getCutoutFactory();
-        mHwcScreenDecorationSupport = mContext.getDisplay().getDisplayDecorationSupport();
+        mHwcScreenDecorationSupport = getHwcScreenDecorationSupport();
         updateHwLayerRoundedCornerDrawable();
         setupDecorations();
         setupCameraListener();
@@ -573,7 +580,7 @@ public class ScreenDecorations implements
                 if (!Objects.equals(newUniqueId, mDisplayUniqueId)) {
                     mDisplayUniqueId = newUniqueId;
                     final DisplayDecorationSupport newScreenDecorationSupport =
-                            mContext.getDisplay().getDisplayDecorationSupport();
+                            getHwcScreenDecorationSupport();
 
                     mRoundedCornerResDelegate.updateDisplayUniqueId(newUniqueId, null);
 
@@ -1148,6 +1155,12 @@ public class ScreenDecorations implements
                 mLogger.logRotationChanged(oldRotation, mRotation);
             }
             setupDecorations();
+            for (int id: DISPLAY_CUTOUT_IDS) {
+                final View view = getOverlayView(id);
+                if (view instanceof DisplayCutoutView) {
+                    ((DisplayCutoutView) view).updateCutout();
+                }
+            }
             if (mOverlays != null) {
                 // Updating the layout params ensures that ViewRootImpl will call relayoutWindow(),
                 // which ensures that the forced seamless rotation will end, even if we updated
@@ -1232,7 +1245,12 @@ public class ScreenDecorations implements
                 }
             }
         }
-        mRoundedCornerResDelegate.dump(pw, args);
+        if (!DEBUG_DISABLE_SCREEN_DECORATIONS) {
+            mRoundedCornerResDelegate.dump(pw, args);
+        } else {
+            pw.println("  RoundedCornerResDelegate state:" +
+                       " skipped due to ScreenDecorations disabled");
+        }
         mDebugRoundedCornerDelegate.dump(pw);
     }
 

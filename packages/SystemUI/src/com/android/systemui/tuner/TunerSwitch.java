@@ -18,7 +18,7 @@ public class TunerSwitch extends SwitchPreferenceCompat implements Tunable {
     private final int mAction;
 
     public TunerSwitch(Context context, AttributeSet attrs) {
-        super(context, attrs);
+        super(context, attrs, androidx.preference.R.attr.switchPreferenceCompatStyle);
 
         TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.TunerSwitch);
         mDefault = a.getBoolean(R.styleable.TunerSwitch_defValue, false);
@@ -53,8 +53,9 @@ public class TunerSwitch extends SwitchPreferenceCompat implements Tunable {
 
     @Override
     protected boolean persistBoolean(boolean value) {
+        TunerService tunerService = Dependency.get(TunerService.class);
         for (String key : getKey().split(",")) {
-            Settings.Secure.putString(getContext().getContentResolver(), key, value ? "1" : "0");
+            tunerService.setValue(key, value ? "1" : "0");
         }
         return true;
     }

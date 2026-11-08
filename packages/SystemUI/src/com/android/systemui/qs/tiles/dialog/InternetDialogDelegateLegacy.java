@@ -34,14 +34,18 @@ import static com.android.systemui.Prefs.Key.QS_HAS_TURNED_OFF_MOBILE_DATA;
 import static com.android.systemui.qs.tiles.dialog.InternetDetailsContentController.MAX_WIFI_ENTRY_COUNT;
 import static com.android.systemui.qs.tiles.dialog.InternetDetailsContentController.SATELLITE_NOT_STARTED;
 import static com.android.systemui.qs.tiles.dialog.InternetDetailsContentController.SATELLITE_STARTED;
+import static com.android.systemui.util.PluralMessageFormaterKt.icuMessageFormat;
 
 import static com.qti.extphone.ExtPhoneCallbackListener.EVENT_ON_CIWLAN_CONFIG_CHANGE;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.drawable.Drawable;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.wifi.SoftApConfiguration;
+import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
 // QTI_BEGIN: 2022-10-07: SystemUI: Merge "Show warning when user tries to turn off mobile data from quick tiles" into t-keystone-qcom-dev
@@ -66,14 +70,15 @@ import android.util.SparseBooleanArray;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewStub;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.CompoundButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.Switch;
 import android.widget.TextView;
 
 import androidx.annotation.MainThread;
@@ -90,6 +95,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.android.internal.logging.UiEvent;
 import com.android.internal.logging.UiEventLogger;
+import com.android.settingslib.Utils;
 import com.android.settingslib.satellite.SatelliteDialogUtils;
 import com.android.settingslib.wifi.WifiEnterpriseRestrictionUtils;
 import com.android.systemui.Prefs;
@@ -165,6 +171,7 @@ public class InternetDialogDelegateLegacy implements
     private TelephonyManager mTelephonyManager;
     @Nullable
     private AlertDialog mAlertDialog;
+    private Context mContext;
     private final UiEventLogger mUiEventLogger;
     private final InternetDetailsContentController mInternetDetailsContentController;
     private TextView mInternetDialogTitle;
@@ -176,6 +183,7 @@ public class InternetDialogDelegateLegacy implements
     private LinearLayout mSecondaryMobileNetworkLayout;
     private LinearLayout mTurnWifiOnLayout;
     private LinearLayout mEthernetLayout;
+    private LinearLayout mHotspotLayout;
     private TextView mWifiToggleTitleText;
     private LinearLayout mWifiScanNotifyLayout;
     private TextView mWifiScanNotifyText;
@@ -192,7 +200,18 @@ public class InternetDialogDelegateLegacy implements
     private Switch mMobileDataToggle;
     private Switch mSecondaryMobileDataToggle;
     private View mMobileToggleDivider;
-    private Switch mWiFiToggle;
+    private View mMobileConnectedSpace;
+    private LinearLayout mFivegLayout;
+    private ImageView mFivegIcon;
+    private TextView mFivegTitleText;
+    private CompoundButton mFivegToggle;
+    private View mFivegToggleDivider;
+    private ImageView mHotspotIcon;
+    private TextView mHotspotTitleText;
+    private TextView mHotspotSummaryText;
+    private CompoundButton mHotspotToggle;
+    private CompoundButton mWiFiToggle;
+    private View mWifiConnectedSpace;
     private Button mDoneButton;
 
     @VisibleForTesting
@@ -325,6 +344,7 @@ public class InternetDialogDelegateLegacy implements
         }
 
         // Save the context that is wrapped with our theme.
+        mContext = context;
         mHandler = handler;
         mBackgroundExecutor = executor;
         mInternetDialogManager = internetDialogManager;
@@ -397,6 +417,7 @@ public class InternetDialogDelegateLegacy implements
         mProgressBar = mDialogView.requireViewById(R.id.wifi_searching_progress);
         mEthernetLayout = mDialogView.requireViewById(R.id.ethernet_layout);
         mMobileNetworkLayout = mDialogView.requireViewById(R.id.mobile_network_layout);
+        mHotspotLayout = mDialogView.requireViewById(R.id.hotspot_layout);
         mTurnWifiOnLayout = mDialogView.requireViewById(R.id.turn_on_wifi_layout);
         mWifiToggleTitleText = mDialogView.requireViewById(R.id.wifi_toggle_title);
         mWifiScanNotifyLayout = mDialogView.requireViewById(R.id.wifi_scan_notify_layout);
@@ -417,13 +438,25 @@ public class InternetDialogDelegateLegacy implements
         mAirplaneModeSummaryText = mDialogView.requireViewById(R.id.airplane_mode_summary);
         mMobileToggleDivider = mDialogView.requireViewById(R.id.mobile_toggle_divider);
         mMobileDataToggle = mDialogView.requireViewById(R.id.mobile_toggle);
+        mMobileConnectedSpace = mDialogView.requireViewById(R.id.mobile_connected_space);
+        mFivegLayout = mDialogView.requireViewById(R.id.fiveg_layout);
+        mFivegIcon = mDialogView.requireViewById(R.id.fiveg_icon);
+        mFivegTitleText = mDialogView.requireViewById(R.id.fiveg_title);
+        mFivegToggleDivider = mDialogView.requireViewById(R.id.fiveg_toggle_divider);
+        mFivegToggle = mDialogView.requireViewById(R.id.fiveg_toggle);
+        mHotspotIcon = mDialogView.requireViewById(R.id.hotspot_icon);
+        mHotspotTitleText = mDialogView.requireViewById(R.id.hotspot_title);
+        mHotspotSummaryText = mDialogView.requireViewById(R.id.hotspot_summary);
+        mHotspotToggle = mDialogView.requireViewById(R.id.hotspot_toggle);
         mWiFiToggle = mDialogView.requireViewById(R.id.wifi_toggle);
+        mWifiConnectedSpace = mDialogView.requireViewById(R.id.wifi_connected_space);
         mBackgroundOn = context.getDrawable(R.drawable.settingslib_switch_bar_bg_on);
         mInternetDialogTitle.setText(getDialogTitleText());
         mInternetDialogTitle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         mBackgroundOff = context.getDrawable(R.drawable.internet_dialog_selected_effect);
         mSecondaryBackgroundOn = mBackgroundOn.getConstantState().newDrawable().mutate();
         setOnClickListener(dialog);
+        setHotspotLayout();
         mTurnWifiOnLayout.setBackground(null);
         mAirplaneModeButton.setVisibility(
                 mInternetDetailsContentController.isAirplaneModeEnabled() ? View.VISIBLE
@@ -472,13 +505,17 @@ public class InternetDialogDelegateLegacy implements
         mLifecycleRegistry.setCurrentState(Lifecycle.State.DESTROYED);
         mMobileNetworkLayout.setOnClickListener(null);
         mMobileNetworkLayout.setOnLongClickListener(null);
+        mFivegLayout.setOnClickListener(null);
+        mFivegToggle.setOnClickListener(null);
+        mHotspotLayout.setOnClickListener(null);
+        mHotspotToggle.setOnClickListener(null);
         mMobileDataToggle.setOnClickListener(null);
         mConnectedWifListLayout.setOnClickListener(null);
         if (mSecondaryMobileNetworkLayout != null) {
             mSecondaryMobileNetworkLayout.setOnClickListener(null);
         }
         mSeeAllLayout.setOnClickListener(null);
-        mWiFiToggle.setOnCheckedChangeListener(null);
+        mWiFiToggle.setOnClickListener(null);
         mDoneButton.setOnClickListener(null);
         mShareWifiButton.setOnClickListener(null);
         mAirplaneModeButton.setOnClickListener(null);
@@ -548,6 +585,10 @@ public class InternetDialogDelegateLegacy implements
                     mInternetDetailsContentController.activeNetworkIsCellular();
             internetContent.mIsCarrierNetworkActive =
                     mInternetDetailsContentController.isCarrierNetworkActive();
+            internetContent.mIsFivegSupported =
+                    mInternetDetailsContentController.isFivegSupported();
+            internetContent.mIsFivegEnabled =
+                    mInternetDetailsContentController.isFivegEnabled();
         }
         internetContent.mIsAirplaneModeEnabled =
                 mInternetDetailsContentController.isAirplaneModeEnabled();
@@ -564,7 +605,7 @@ public class InternetDialogDelegateLegacy implements
         internetContent.mCurrentSatelliteState =
                 mInternetDetailsContentController.getCurrentSatelliteState();
         internetContent.mDefaultSubSignalStrengthIcon =
-                mInternetDetailsContentController.getSignalStrengthDrawable(mDefaultDataSubId);
+                mInternetDetailsContentController.getSignalStrengthDrawable(mDefaultDataSubId).mutate();
 
         return internetContent;
     }
@@ -610,6 +651,19 @@ public class InternetDialogDelegateLegacy implements
                         dialog.getContext(), mDefaultDataSubId, isChecked, false);
             }
         });
+        mFivegToggle.setOnClickListener(v -> setFivegEnabled(mFivegToggle.isChecked()));
+        mFivegLayout.setOnClickListener(v -> {
+            if (!mFivegToggle.isEnabled()) {
+                return;
+            }
+            boolean isChecked = !mFivegToggle.isChecked();
+            mFivegToggle.setChecked(isChecked);
+            setFivegEnabled(isChecked);
+        });
+        mHotspotLayout.setOnClickListener(mInternetDetailsContentController::launchHotspotSetting);
+        mHotspotToggle.setOnClickListener(v -> {
+            mInternetDetailsContentController.setHotspotEnabled(mHotspotToggle.isChecked());
+        });
         mConnectedWifListLayout.setOnClickListener(this::onClickConnectedWifi);
         mSeeAllLayout.setOnClickListener(this::onClickSeeMoreButton);
         mWiFiToggle.setOnClickListener(v -> {
@@ -647,6 +701,14 @@ public class InternetDialogDelegateLegacy implements
             return;
         }
         mInternetDetailsContentController.setWifiEnabled(isChecked);
+    }
+
+    private void setFivegEnabled(boolean isChecked) {
+        mBackgroundExecutor.execute(() -> {
+            mInternetDetailsContentController.setFivegEnabled(isChecked);
+            mDataInternetContent.postValue(
+                    getInternetContent(true /* shouldUpdateMobileNetwork */));
+        });
     }
 
     @MainThread
@@ -704,6 +766,7 @@ public class InternetDialogDelegateLegacy implements
             }
             mMobileNetworkLayout.setVisibility(View.VISIBLE);
             if (internetContent.mCurrentSatelliteState > SATELLITE_NOT_STARTED) {
+                mFivegLayout.setVisibility(View.GONE);
                 mMobileTitleText.setText(R.string.satellite_network_title_text);
                 mMobileDataToggle.setVisibility(View.INVISIBLE);
                 mMobileToggleDivider.setVisibility(View.INVISIBLE);
@@ -762,6 +825,8 @@ public class InternetDialogDelegateLegacy implements
                 });
                 mSignalIcon.setImageDrawable(internetContent.mDefaultSubSignalStrengthIcon);
 
+                mMobileConnectedSpace.setVisibility(
+                        isNetworkConnected ? View.VISIBLE : View.GONE);
                 mMobileDataToggle.setVisibility(
                         mCanConfigMobileData ? View.VISIBLE : View.INVISIBLE);
                 mMobileToggleDivider.setVisibility(
@@ -914,6 +979,9 @@ public class InternetDialogDelegateLegacy implements
                     mMobileSummaryText.setTextAppearance(secondaryRes);
                 }
 
+                updateFivegLayout(context, internetContent, isNetworkConnected,
+                        nonDdsVisibility == View.VISIBLE);
+
                 if (mSecondaryMobileNetworkLayout != null) {
                     mSecondaryMobileNetworkLayout.setVisibility(nonDdsVisibility);
                 }
@@ -932,6 +1000,66 @@ public class InternetDialogDelegateLegacy implements
     }
 
     @MainThread
+    private void updateFivegLayout(Context context, InternetContent internetContent,
+            boolean isNetworkConnected, boolean isDdsSecondaryVisual) {
+        if (!internetContent.mIsFivegSupported) {
+            mFivegLayout.setVisibility(View.GONE);
+            return;
+        }
+        mFivegLayout.setVisibility(View.VISIBLE);
+
+        if (mFivegToggle.isChecked() != internetContent.mIsFivegEnabled) {
+            mFivegToggle.setChecked(internetContent.mIsFivegEnabled);
+        }
+        boolean isToggleEnabled = mCanConfigMobileData && internetContent.mHasActiveSubIdOnDds;
+        mFivegLayout.setEnabled(isToggleEnabled);
+        mFivegToggle.setEnabled(isToggleEnabled);
+        mFivegTitleText.setEnabled(isToggleEnabled);
+        mFivegToggle.setVisibility(mCanConfigMobileData ? View.VISIBLE : View.INVISIBLE);
+        mFivegToggleDivider.setVisibility(mCanConfigMobileData ? View.VISIBLE : View.INVISIBLE);
+
+        boolean isActiveVisual = isNetworkConnected && !isDdsSecondaryVisual;
+        int iconColor;
+        if (isDdsSecondaryVisual) {
+            iconColor = context.getColor(R.color.connected_network_secondary_color);
+        } else if (isNetworkConnected) {
+            iconColor = context.getColor(R.color.connected_network_primary_color);
+        } else {
+            iconColor = Utils.getColorAttrDefaultColor(context, android.R.attr.textColorTertiary);
+        }
+        mFivegIcon.setImageTintList(ColorStateList.valueOf(iconColor));
+        mFivegToggleDivider.setBackgroundColor(context.getColor(isNetworkConnected
+                ? R.color.connected_network_primary_color
+                : R.color.disconnected_network_primary_color));
+        mFivegTitleText.setTextAppearance(isActiveVisual
+                ? R.style.TextAppearance_InternetDialog_Active
+                : R.style.TextAppearance_InternetDialog);
+    }
+
+    private void setHotspotLayout() {
+        if (!mInternetDetailsContentController.isHotspotAvailable()) {
+            mHotspotLayout.setVisibility(View.GONE);
+            return;
+        }
+        mHotspotLayout.setVisibility(View.VISIBLE);
+        mHotspotTitleText.setText(getHotspotTitle());
+        mHotspotSummaryText.setText(getHotspotSummary());
+
+        boolean enabled = mInternetDetailsContentController.isHotspotEnabled();
+        mHotspotIcon.setImageResource(enabled ? R.drawable.ic_internet_hotspot
+                : R.drawable.ic_internet_hotspot_disabled);
+        if (mHotspotToggle.isChecked() != enabled &&
+                !mInternetDetailsContentController.isHotspotTransient()) {
+            mHotspotToggle.setChecked(enabled);
+        }
+
+        boolean dataSaver = mInternetDetailsContentController.isDataSaverEnabled();
+        mHotspotTitleText.setEnabled(!dataSaver);
+        mHotspotSummaryText.setEnabled(!dataSaver);
+        mHotspotToggle.setEnabled(!dataSaver);
+    }
+
+    @MainThread
     private void updateWifiToggle(InternetContent internetContent) {
         if (mWiFiToggle.isChecked() != internetContent.mIsWifiEnabled) {
             mWiFiToggle.setChecked(internetContent.mIsWifiEnabled);
@@ -941,9 +1069,15 @@ public class InternetDialogDelegateLegacy implements
                     ? R.style.TextAppearance_InternetDialog_Active
                     : R.style.TextAppearance_InternetDialog);
         }
-        mTurnWifiOnLayout.setBackground(
-                (internetContent.mIsDeviceLocked && mConnectedWifiEntry != null) ? mBackgroundOn
-                        : null);
+
+        boolean showBackground = internetContent.mIsDeviceLocked && mConnectedWifiEntry != null;
+        ViewGroup.LayoutParams lp = mTurnWifiOnLayout.getLayoutParams();
+        lp.height = mContext.getResources().getDimensionPixelSize(
+                showBackground ? R.dimen.internet_dialog_wifi_network_height
+                : R.dimen.internet_dialog_wifi_toggle_height);
+        mTurnWifiOnLayout.setLayoutParams(lp);
+        mTurnWifiOnLayout.setBackground(showBackground ? mBackgroundOn : null);
+        mWifiConnectedSpace.setVisibility(showBackground ? View.VISIBLE : View.GONE);
 
         if (!mCanChangeWifiState && mWiFiToggle.isEnabled()) {
             mWiFiToggle.setEnabled(false);
@@ -1075,6 +1209,35 @@ public class InternetDialogDelegateLegacy implements
             return mDialog.getContext().getString(R.string.mobile_data_summary_not_allowed_to_disable_data);
         }
         return mInternetDetailsContentController.getMobileNetworkSummary(subId);
+    }
+
+    private CharSequence getHotspotTitle() {
+        final WifiManager wifiManager = mInternetDetailsContentController.getWifiManager();
+        if (wifiManager != null) {
+            final SoftApConfiguration softApConfig = wifiManager.getSoftApConfiguration();
+            if (softApConfig != null) {
+                return softApConfig.getSsid();
+            }
+        }
+        return mContext.getString(R.string.quick_settings_hotspot_label);
+    }
+
+    String getHotspotSummary() {
+        if (mInternetDetailsContentController.isDataSaverEnabled()) {
+            return mContext.getString(
+                    R.string.quick_settings_hotspot_secondary_label_data_saver_enabled);
+        } else if (mInternetDetailsContentController.isHotspotTransient()) {
+            return mContext.getString(R.string.quick_settings_hotspot_secondary_label_transient);
+        } else if (mInternetDetailsContentController.isHotspotEnabled()) {
+            int numDevices = mInternetDetailsContentController.getHotspotNumDevices();
+            if (numDevices > 0) {
+                return mContext.getResources().getQuantityString(
+                        R.plurals.quick_settings_internet_hotspot_summary_num_devices,
+                        numDevices, numDevices);
+            }
+            return mContext.getString(R.string.switch_bar_on);
+        }
+        return mContext.getString(R.string.switch_bar_off);
     }
 
     private void setProgressBarVisible(boolean visible) {
@@ -1438,6 +1601,11 @@ public class InternetDialogDelegateLegacy implements
     }
 
     @Override
+    public void onHotspotChanged() {
+        setHotspotLayout();
+    }
+
+    @Override
     public void onWindowFocusChanged(SystemUIDialog dialog, boolean hasFocus) {
         if (mAlertDialog != null && !mAlertDialog.isShowing()) {
             if (!hasFocus && dialog.isShowing()) {
@@ -1520,6 +1688,8 @@ public class InternetDialogDelegateLegacy implements
         boolean mHasActiveSubIdOnDds = false;
         boolean mIsDeviceLocked = false;
         boolean mIsWifiScanEnabled = false;
+        boolean mIsFivegSupported = false;
+        boolean mIsFivegEnabled = false;
         int mActiveAutoSwitchNonDdsSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
         int mActiveDataSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
         int mCurrentSatelliteState = SATELLITE_NOT_STARTED;

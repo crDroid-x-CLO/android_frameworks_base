@@ -195,6 +195,8 @@ import android.se.omapi.SeFrameworkInitializer;
 import android.se.omapi.SeServiceManager;
 import android.security.NetworkSecurityPolicy;
 import android.security.net.config.NetworkSecurityConfigProvider;
+import android.security.gameprops.GamePropsSpoofService;
+import android.security.pif.PlayIntegritySpoofService;
 import android.system.ErrnoException;
 import android.telephony.TelephonyFrameworkInitializer;
 import android.util.AndroidRuntimeException;
@@ -226,6 +228,7 @@ import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.WindowManagerGlobal;
+import android.view.animation.AnimationUtils;
 import android.view.autofill.AutofillId;
 import android.view.autofill.AutofillManager;
 import android.view.autofill.AutofillValue;
@@ -262,6 +265,7 @@ import com.android.internal.os.SomeArgs;
 import com.android.internal.os.logging.MetricsLoggerWrapper;
 import com.android.internal.policy.DecorView;
 import com.android.internal.protolog.ProtoLog;
+import com.android.internal.util.android.FontController;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FastPrintWriter;
 import com.android.internal.util.Preconditions;
@@ -4809,7 +4813,7 @@ public final class ActivityThread extends ClientTransactionHandler
             return;
         }
         Configuration[] configurations = r.activity.getResources().getResourceConfigurations();
-        if (configurations == null) {
+        if (configurations == null || r.activity.mFinished) {
             return;
         }
         r.mSizeConfigurations = new SizeConfigurationBuckets(configurations);
@@ -5615,8 +5619,25 @@ public final class ActivityThread extends ClientTransactionHandler
             } else {
                 cl = packageInfo.getClassLoader();
             }
-            service = packageInfo.getAppFactory()
-                    .instantiateService(cl, data.info.name, data.intent);
+            try {
+                service = packageInfo.getAppFactory()
+                        .instantiateService(cl, data.info.name, data.intent);
+            } catch (ClassNotFoundException e) {
+                // NativeOnlySandboxedProcessService* is declared android:nativeService="true"
+                // and has no Java class by design: it is meant to run as a native-only service
+                // under the native app zygote prototype. That prototype is disabled here, so the
+                // service falls through to normal Java instantiation and there is no class to
+                // create. Substitute the equivalent regular SandboxedProcessService*, which the
+                // browser is already prepared to fall back to, so the sandboxed renderer starts
+                // instead of crash-looping.
+                final String fallbackName = data.info.name.replace(
+                        ".NativeOnlySandboxedProcessService", ".SandboxedProcessService");
+                if (fallbackName.equals(data.info.name)) {
+                    throw e;
+                }
+                service = packageInfo.getAppFactory()
+                        .instantiateService(cl, fallbackName, data.intent);
+            }
             ContextImpl context = ContextImpl.getImpl(service
                     .createServiceBaseContext(this, packageInfo));
             if (data.info.splitName != null) {
@@ -5666,7 +5687,7 @@ public final class ActivityThread extends ClientTransactionHandler
         Service s = mServices.get(data.token);
         if (DEBUG_SERVICE)
             Slog.v(TAG, "handleBindService s=" + s + " rebind=" + data.rebind);
-        if (s != null) {
+        if (s != null && createData != null) {
             try {
                 data.intent.setExtrasClassLoader(s.getClassLoader());
                 data.intent.prepareToEnterProcess(isProtectedComponent(createData.info),
@@ -5697,7 +5718,7 @@ public final class ActivityThread extends ClientTransactionHandler
     private void handleUnbindService(BindServiceData data) {
         CreateServiceData createData = mServicesData.get(data.token);
         Service s = mServices.get(data.token);
-        if (s != null) {
+        if (s != null && createData != null) {
             try {
                 data.intent.setExtrasClassLoader(s.getClassLoader());
                 data.intent.prepareToEnterProcess(isProtectedComponent(createData.info),
@@ -5805,7 +5826,7 @@ public final class ActivityThread extends ClientTransactionHandler
     private void handleServiceArgs(ServiceArgsData data) {
         CreateServiceData createData = mServicesData.get(data.token);
         Service s = mServices.get(data.token);
-        if (s != null) {
+        if (s != null && createData != null) {
             try {
                 if (data.args != null) {
                     data.args.setExtrasClassLoader(s.getClassLoader());
@@ -7086,7 +7107,7 @@ public final class ActivityThread extends ClientTransactionHandler
         final boolean movedToDifferentDisplay = isDifferentDisplay(activity.getDisplayId(),
                 displayId);
         final Configuration currentResConfig = activity.getResources().getConfiguration();
-        final int diff = currentResConfig.diffPublicOnly(newConfig);
+        final int diff = currentResConfig != null ? currentResConfig.diffPublicOnly(newConfig) : 0xffffffff;
         final boolean hasPublicResConfigChange = diff != 0;
         // TODO(b/173090263): Use diff instead after the improvement of AssetManager and
         // ResourcesImpl constructions.
@@ -7296,6 +7317,11 @@ public final class ActivityThread extends ClientTransactionHandler
         mConfigurationController.handleConfigurationChanged(config);
         updateDeviceIdForNonUIContexts(deviceId);
 
+        final Application currentApp = getApplication();
+        if (currentApp != null) {
+            FontController.OnConfigurationChanged(currentApp.getResources());
+        }
+
         // These are only done to maintain @UnsupportedAppUsage and should be removed someday.
         mCurDefaultDisplayDpi = mConfigurationController.getCurDefaultDisplayDpi();
         mConfiguration = mConfigurationController.getConfiguration();
@@ -7411,16 +7437,18 @@ public final class ActivityThread extends ClientTransactionHandler
             }
         }
 
-        ResourcesImpl beforeImpl = getApplication().getResources().getImpl();
+        final Application app = getApplication();
+        ResourcesImpl beforeImpl = app != null ? app.getResources().getImpl() : null;
 
         synchronized (mResourcesManager) {
             // Update all affected Resources objects to use new ResourcesImpl
             mResourcesManager.applyAllPendingAppInfoUpdates();
         }
 
-        ResourcesImpl afterImpl = getApplication().getResources().getImpl();
+        ResourcesImpl afterImpl = app != null ? app.getResources().getImpl() : null;
 
-        if ((beforeImpl != afterImpl) && !Arrays.equals(beforeImpl.getAssets().getApkAssets(),
+        if (beforeImpl != null && afterImpl != null && (beforeImpl != afterImpl)
+                && !Arrays.equals(beforeImpl.getAssets().getApkAssets(),
                 afterImpl.getAssets().getApkAssets())) {
             List<String> beforeAssets = Arrays.asList(beforeImpl.getAssets().getApkPaths());
             List<String> afterAssets = Arrays.asList(afterImpl.getAssets().getApkPaths());
@@ -7440,6 +7468,33 @@ public final class ActivityThread extends ClientTransactionHandler
                         + afterAssets);
             }
         }
+
+        if (app != null) {
+            updateVariableFontFamilies(app);
+            FontController.OnConfigurationChanged(app.getResources());
+        }
+    }
+
+    /**
+     * Shows the Material 3 Expressive {@code variable-*} fonts of system apps in the font
+     * selected in ThemePicker, the same as the rest of their text, which goes through the
+     * framework's headline and body font families. Third-party apps keep the
+     * {@code variable-*} fonts as defined.
+     */
+    private static void updateVariableFontFamilies(@NonNull Context context) {
+        String headlineFamily = null;
+        String bodyFamily = null;
+        if (context.getApplicationInfo().isSystemApp()) {
+            final Resources res = context.getResources();
+            headlineFamily = res.getString(com.android.internal.R.string.config_headlineFontFamily);
+            bodyFamily = res.getString(com.android.internal.R.string.config_bodyFontFamily);
+            if (FontController.isDefaultFont(bodyFamily)) {
+                // Keep variable-* as defined so opsz/ROND from fonts_customization.xml survive.
+                headlineFamily = null;
+                bodyFamily = null;
+            }
+        }
+        Typeface.setVariableFontFamilies(headlineFamily, bodyFamily);
     }
 
     /**
@@ -8102,6 +8157,9 @@ public final class ActivityThread extends ClientTransactionHandler
         data.info = getPackageInfo(data.appInfo, mCompatibilityInfo, null /* baseLoader */,
                 false /* securityViolation */, true /* includeCode */,
                 false /* registerPackage */, isSdkSandbox);
+
+        FontController.OnConfigurationChanged(data.info.getResources());
+
         if (isSdkSandbox) {
             data.info.setSdkSandboxStorage(data.sdkSandboxClientAppVolumeUuid,
                     data.sdkSandboxClientAppPackage);
@@ -8182,16 +8240,43 @@ public final class ActivityThread extends ClientTransactionHandler
         final ContextImpl appContext = ContextImpl.createAppContext(this, data.info);
         mConfigurationController.updateLocaleListFromAppContext(appContext);
 
+        GamePropsSpoofService gamePropsService = GamePropsSpoofService.getInstance();
+        if (gamePropsService.isEnabled()) {
+            gamePropsService.spoofForPackage(data.appInfo.packageName);
+        }
+
+        if (PlayIntegritySpoofService.isTargetProcess(data.processName)) {
+            PlayIntegritySpoofService pifService = PlayIntegritySpoofService.getInstance();
+            if (pifService.shouldSpoof(data.processName)) {
+                pifService.spoofBuildFields(data.processName);
+                if (pifService.isDroidGuard(data.processName)) {
+                    pifService.spoofProperties();
+                    if (pifService.isSpoofProviderEnabled()) {
+                        pifService.spoofProvider();
+                    }
+                    if (pifService.isSpoofSignatureEnabled()) {
+                        pifService.spoofSignature();
+                    }
+                }
+            }
+        } else if (PlayIntegritySpoofService.isPhotosPackage(data.appInfo.packageName)) {
+            PlayIntegritySpoofService pifService = PlayIntegritySpoofService.getInstance();
+            if (pifService.shouldSpoofPhotos(data.appInfo.packageName)) {
+                pifService.spoofPhotosProps();
+            }
+        }
+
         // Initialize the default http proxy in this process.
         Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "Setup proxies");
         try {
             final IBinder b = ServiceManager.getService(Context.CONNECTIVITY_SERVICE);
-            // Defensive check - unlikely to be null on modern (FBE) devices even in Direct Boot
-            // mode, but was possible on older FDE systems.
-            // Slog.wtf will report if this unexpectedly occurs.
-            // TODO(b/463367733): Remove if proven unnecessary by WTF data.
+            // Isolated processes cannot access ConnectivityService. A missing service in
+            // other processes is unexpected on FBE devices, even in Direct Boot mode.
             if (b == null) {
-                Slog.wtf("ActivityThread", "ConnectivityService is null in handleBindApplication!");
+                if (!Process.isIsolated()) {
+                    Slog.wtf("ActivityThread",
+                            "ConnectivityService is null in handleBindApplication!");
+                }
                 Proxy.setHttpProxyConfiguration(null);
             } else {
                 if (android.net.platform.flags.Flags.enableMultiProxySystemPlatform()) {
@@ -8305,6 +8390,7 @@ public final class ActivityThread extends ClientTransactionHandler
             sendMessage(H.SET_CONTENT_CAPTURE_OPTIONS_CALLBACK, data.appInfo.packageName);
 
             mInitialApplication = app;
+            updateVariableFontFamilies(app);
             final boolean updateHttpProxy;
             synchronized (this) {
                 updateHttpProxy = mUpdateHttpProxyOnBind;
@@ -8415,6 +8501,15 @@ public final class ActivityThread extends ClientTransactionHandler
 // QTI_BEGIN: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
         }
 // QTI_END: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+
+        if (!Process.isIsolated() && AnimationUtils.isPerfAnimEnabled()) {
+            try {
+                AnimationUtils.ActivityAnimations.preload();
+            } catch (Throwable t) {
+                // Preloading is purely an optimization - never let it take down the app.
+                Slog.w(TAG, "Failed to preload activity animations", t);
+            }
+        }
 
         try {
             mgr.finishAttachApplication(mStartSeq, timestampApplicationOnCreateNs);
@@ -9345,7 +9440,9 @@ public final class ActivityThread extends ClientTransactionHandler
             RuntimeInit.setApplicationObject(mAppThread.asBinder());
             final IActivityManager mgr = ActivityManager.getService();
             try {
-                mgr.attachApplication(mAppThread, startSeq);
+                if (mgr != null) {
+                    mgr.attachApplication(mAppThread, startSeq);
+                }
             } catch (RemoteException ex) {
                 throw ex.rethrowFromSystemServer();
             }
@@ -9363,8 +9460,11 @@ public final class ActivityThread extends ClientTransactionHandler
                                 + " total=" + (runtime.totalMemory()/1024)
                                 + " used=" + (dalvikUsed/1024));
                         mSomeActivitiesChanged = false;
+                        final IActivityTaskManager atmgr = ActivityTaskManager.getService();
                         try {
-                            ActivityTaskManager.getService().releaseSomeActivities(mAppThread);
+                            if (atmgr != null) {
+                                atmgr.releaseSomeActivities(mAppThread);
+                            }
                         } catch (RemoteException e) {
                             throw e.rethrowFromSystemServer();
                         }

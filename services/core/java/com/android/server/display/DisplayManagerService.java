@@ -224,6 +224,8 @@ import com.android.server.wm.DesktopModeHelper;
 import com.android.server.wm.SurfaceAnimationThread;
 import com.android.server.wm.WindowManagerInternal;
 
+import com.libremobileos.freeform.ILMOFreeformDisplayCallback;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -448,7 +450,16 @@ public final class DisplayManagerService extends SystemService {
                         for (int i = 0; i < size; i++) {
                             final int displayState = i == index ? state : mDisplayStates.valueAt(i);
                             if (displayState != Display.STATE_OFF) {
-                                allOff = false;
+                                final LogicalDisplay display =
+                                        mLogicalDisplayMapper
+                                                .getDisplayLocked(mDisplayStates.keyAt(i));
+                                if (display.getDisplayInfoLocked() != null) {
+                                    int displayType = display.getDisplayInfoLocked().type;
+                                    if (displayType != Display.TYPE_VIRTUAL
+                                            && displayType != Display.TYPE_OVERLAY) {
+                                        allOff = false;
+                                    }
+                                }
                             }
                             if (Display.isActiveState(displayState)) {
                                 allInactive = false;
@@ -474,6 +485,13 @@ public final class DisplayManagerService extends SystemService {
 
             if (state != Display.STATE_OFF) {
                 requestDisplayStateInternal(displayId, state, brightness, sdrBrightness);
+            }
+
+            if (stateChanged) {
+                Intent intent = new Intent(Intent.ACTION_DISPLAY_STATE_CHANGED)
+                        .addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY
+                                | Intent.FLAG_RECEIVER_FOREGROUND);
+                mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
             }
         }
     };
@@ -594,6 +612,8 @@ public final class DisplayManagerService extends SystemService {
     // only be used for the devices in projected mode.
     private boolean mIncludeDefaultDisplayInTopology = true;
     private final boolean mStableEdidsFlag;
+
+    private LMOFreeformDisplayAdapter mFreeformDisplayAdapter;
 
     private final BroadcastReceiver mIdleModeReceiver = new BroadcastReceiver() {
         @Override
@@ -2575,6 +2595,7 @@ public final class DisplayManagerService extends SystemService {
             if (shouldRegisterNonEssentialDisplayAdaptersLocked()) {
                 registerOverlayDisplayAdapterLocked();
                 registerWifiDisplayAdapterLocked();
+                registerFreeformDisplayAdapterLocked();
             }
         }
     }
@@ -2594,6 +2615,13 @@ public final class DisplayManagerService extends SystemService {
                     mPersistentDataStore, mFlags);
             registerDisplayAdapterLocked(mWifiDisplayAdapter);
         }
+    }
+
+    private void registerFreeformDisplayAdapterLocked() {
+        mFreeformDisplayAdapter = new LMOFreeformDisplayAdapter(
+                mSyncRoot, mContext, mHandler, mDisplayDeviceRepo, mLogicalDisplayMapper,
+                mUiHandler, mFlags);
+        registerDisplayAdapterLocked(mFreeformDisplayAdapter);
     }
 
     private boolean shouldRegisterNonEssentialDisplayAdaptersLocked() {
@@ -6207,7 +6235,11 @@ public final class DisplayManagerService extends SystemService {
         @Override // Binder call
         public void setTemporaryAutoBrightnessAdjustment(float adjustment) {
             setTemporaryAutoBrightnessAdjustment_enforcePermission();
-            final long token = Binder.clearCallingIdentity();
+            if (adjustment == 0.0f) {
+                Slog.w(TAG, "Invalid auto brightness adjustment 0.0f, use Float.NaN instead!");
+                adjustment = Float.NaN;
+            }
+	    final long token = Binder.clearCallingIdentity();
             try {
                 synchronized (mSyncRoot) {
                     mDisplayPowerControllers.get(Display.DEFAULT_DISPLAY)
@@ -6503,6 +6535,14 @@ public final class DisplayManagerService extends SystemService {
             requestDisplayModes_enforcePermission();
             DisplayManagerService.this.mDisplayModeDirector.requestDisplayModes(
                     token, displayId, modeIds);
+        }
+
+        @EnforcePermission(RESTRICT_DISPLAY_MODES)
+        @Override // Binder call
+        public void requestMaxRefreshRate(IBinder token, int displayId, float maxRefreshRate) {
+            requestMaxRefreshRate_enforcePermission();
+            DisplayManagerService.this.mDisplayModeDirector.requestMaxRefreshRate(
+                    token, displayId, maxRefreshRate);
         }
 
         @Override // Binder call
@@ -7155,6 +7195,23 @@ public final class DisplayManagerService extends SystemService {
             if (userId == mCurrentUserId) {
                 scheduleTopologiesReload(mCurrentUserId, /*isUserSwitching=*/ false);
             }
+        }
+
+        public void createFreeformLocked(String name, ILMOFreeformDisplayCallback callback,
+                int width, int height, int densityDpi, boolean secure, boolean ownContentOnly,
+                boolean shouldShowSystemDecorations, Surface surface, float refreshRate,
+                long presentationDeadlineNanos) {
+            mFreeformDisplayAdapter.createFreeformLocked(name, callback, width, height, densityDpi,
+                    secure, ownContentOnly, shouldShowSystemDecorations, surface, refreshRate,
+                    presentationDeadlineNanos);
+        }
+
+        public void resizeFreeform(IBinder appToken, int width, int height, int densityDpi) {
+            mFreeformDisplayAdapter.resizeFreeform(appToken, width, height, densityDpi);
+        }
+
+        public void releaseFreeform(IBinder appToken) {
+            mFreeformDisplayAdapter.releaseFreeform(appToken);
         }
     }
 

@@ -99,6 +99,8 @@ import com.android.systemui.log.table.TableLogBuffer
 // QTI_BEGIN: 2023-04-01: Data: SystemUI: Readapt network type icon customization
 import com.android.systemui.log.table.logDiffsForTable
 // QTI_END: 2023-04-01: Data: SystemUI: Readapt network type icon customization
+import com.android.systemui.statusbar.pipeline.ims.data.model.ImsStateModel
+import com.android.systemui.statusbar.pipeline.ims.data.repository.ImsRepository
 import com.android.systemui.statusbar.pipeline.mobile.data.MobileInputLogger
 import com.android.systemui.statusbar.pipeline.mobile.data.model.DataConnectionState.Disconnected
 import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameModel
@@ -137,6 +139,7 @@ import kotlinx.coroutines.flow.callbackFlow
 // QTI_BEGIN: 2023-04-01: Data: SystemUI: Readapt network type icon customization
 import kotlinx.coroutines.flow.distinctUntilChanged
 // QTI_END: 2023-04-01: Data: SystemUI: Readapt network type icon customization
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -179,6 +182,7 @@ class MobileConnectionRepositoryImpl(
 // QTI_BEGIN: 2023-03-02: Data: SystemUI: Support side car 5G icon
     private val fiveGServiceClient: FiveGServiceClient,
 // QTI_END: 2023-03-02: Data: SystemUI: Support side car 5G icon
+    imsRepo: ImsRepository,
 // QTI_BEGIN: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
     slotIndexForSubId:  Flow<Int>? = null,
 // QTI_END: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
@@ -587,7 +591,7 @@ class MobileConnectionRepositoryImpl(
      * See b/322432056 for context.
      */
     @SuppressLint("RegisterReceiverViaContext")
-    override val networkName: StateFlow<NetworkNameModel> = run {
+    private val networkNameOrDefault: StateFlow<NetworkNameModel> = run {
         var subscriptionManager: SubscriptionManager? =
             context.getSystemService(SubscriptionManager::class.java)
         val initial = subscriptionManager?.getActiveSubscriptionInfo(subId)?.let {
@@ -625,6 +629,21 @@ class MobileConnectionRepositoryImpl(
             .stateIn(scope, SharingStarted.Eagerly, initial)
     }
 
+
+    /**
+     * Filtered version of networkNameOrDefault that, when in service, uses the carrier name
+     * rather than default network name ("No service").
+     */
+    override val networkName: StateFlow<NetworkNameModel> =
+        combine(isInService, carrierName, networkNameOrDefault) {
+            isInServiceVal, carrierNameVal, networkNameOrDefaultVal ->
+            if (isInServiceVal && (networkNameOrDefaultVal === defaultNetworkName)) {
+                carrierNameVal
+            } else {
+                networkNameOrDefaultVal
+            }
+        }
+        .stateIn(scope, SharingStarted.Eagerly, defaultNetworkName)
 
     override val dataEnabled = run {
         val initial = telephonyManager.isDataConnectionAllowed
@@ -902,6 +921,8 @@ class MobileConnectionRepositoryImpl(
     /** Typical mobile connections aren't available during airplane mode. */
     override val isAllowedDuringAirplaneMode = MutableStateFlow(false).asStateFlow()
 
+    override val imsState: StateFlow<ImsStateModel> = imsRepo.imsState
+
     /**
      * Currently, a network with NET_CAPABILITY_PRIORITIZE_LATENCY is the only type of network that
      * we consider to be a "network slice". _PRIORITIZE_BANDWIDTH may be added in the future. Any of
@@ -963,6 +984,7 @@ class MobileConnectionRepositoryImpl(
             subscriptionModel: Flow<SubscriptionModel?>,
             defaultNetworkName: NetworkNameModel,
             networkNameSeparator: String,
+            imsRepository: ImsRepository,
 // QTI_BEGIN: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
             slotIndexForSubId:  Flow<Int>? = null,
 // QTI_END: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
@@ -986,6 +1008,7 @@ class MobileConnectionRepositoryImpl(
 // QTI_BEGIN: 2023-03-02: Data: SystemUI: Support side car 5G icon
                 fiveGServiceClient,
 // QTI_END: 2023-03-02: Data: SystemUI: Support side car 5G icon
+                imsRepository,
 // QTI_BEGIN: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
                 slotIndexForSubId,
 // QTI_END: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue

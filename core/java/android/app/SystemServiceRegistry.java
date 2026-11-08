@@ -253,6 +253,8 @@ import android.permission.LegacyPermissionManager;
 import android.permission.PermissionCheckerManager;
 import android.permission.PermissionControllerManager;
 import android.permission.PermissionManager;
+import android.pocket.IPocketService;
+import android.pocket.PocketManager;
 import android.print.IPrintManager;
 import android.print.PrintManager;
 import android.provider.E2eeContactKeysManager;
@@ -295,7 +297,6 @@ import android.telephony.MmsManager;
 import android.telephony.TelephonyFrameworkInitializer;
 import android.telephony.TelephonyRegistryManager;
 import android.transparency.BinaryTransparencyManager;
-import android.util.ArrayMap;
 import android.util.Log;
 import android.util.Slog;
 import android.uwb.UwbFrameworkInitializer;
@@ -336,6 +337,7 @@ import com.android.internal.telecom.TelecomDependencies;
 import com.android.internal.util.Preconditions;
 import com.android.modules.utils.ravenwood.RavenwoodHelper;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -370,10 +372,10 @@ public final class SystemServiceRegistry {
     // Service registry information.
     // This information is never changed once static initialization has completed.
     private static final Map<Class<?>, String> SYSTEM_SERVICE_NAMES =
-            new ArrayMap<Class<?>, String>();
+            new HashMap<Class<?>, String>();
     private static final Map<String, ServiceFetcher<?>> SYSTEM_SERVICE_FETCHERS =
-            new ArrayMap<String, ServiceFetcher<?>>();
-    private static final Map<String, String> SYSTEM_SERVICE_CLASS_NAMES = new ArrayMap<>();
+            new HashMap<String, ServiceFetcher<?>>();
+    private static final Map<String, String> SYSTEM_SERVICE_CLASS_NAMES = new HashMap<>();
 
     private static int sServiceCacheSize;
 
@@ -618,7 +620,10 @@ public final class SystemServiceRegistry {
                 new CachedServiceFetcher<DropBoxManager>() {
             @Override
             public DropBoxManager createService(ContextImpl ctx) throws ServiceNotFoundException {
-                IBinder b = ServiceManager.getServiceOrThrow(Context.DROPBOX_SERVICE);
+                IBinder b = ServiceManager.getService(Context.DROPBOX_SERVICE);
+                if (b == null) {
+                    return null;
+                }
                 IDropBoxManagerService service = IDropBoxManagerService.Stub.asInterface(b);
                 return new DropBoxManager(ctx, service);
             }});
@@ -1048,6 +1053,13 @@ public final class SystemServiceRegistry {
                 return new AppOpsManager(ctx, service);
             }});
 
+        registerService(Context.AX_SANDBOX_SERVICE, AxSandboxManager.class,
+                new CachedServiceFetcher<AxSandboxManager>() {
+            @Override
+            public AxSandboxManager createService(ContextImpl ctx) {
+                return new AxSandboxManager(ctx.getOuterContext());
+            }});
+
         registerService(Context.CAMERA_SERVICE, CameraManager.class,
                 new CachedServiceFetcher<CameraManager>() {
             @Override
@@ -1232,6 +1244,18 @@ public final class SystemServiceRegistry {
                     }
                 });
 
+        registerService(Context.POCKET_SERVICE, PocketManager.class,
+                new CachedServiceFetcher<PocketManager>() {
+                    @Override
+                    public PocketManager createService(ContextImpl ctx) {
+                        if (!ctx.getResources().getBoolean(R.bool.config_pocketModeSupported)) {
+                            return null;
+                        }
+                        IBinder binder = ServiceManager.getService(Context.POCKET_SERVICE);
+                        IPocketService service = IPocketService.Stub.asInterface(binder);
+                        return new PocketManager(ctx.getOuterContext(), service);
+                    }});
+
         registerService(Context.TV_INTERACTIVE_APP_SERVICE, TvInteractiveAppManager.class,
                 new CachedServiceFetcher<TvInteractiveAppManager>() {
             @Override
@@ -1296,7 +1320,10 @@ public final class SystemServiceRegistry {
                 new StaticServiceFetcher<PersistentDataBlockManager>() {
             @Override
             public PersistentDataBlockManager createService() throws ServiceNotFoundException {
-                IBinder b = ServiceManager.getServiceOrThrow(Context.PERSISTENT_DATA_BLOCK_SERVICE);
+                IBinder b = ServiceManager.getService(Context.PERSISTENT_DATA_BLOCK_SERVICE);
+                if (b == null) {
+                    return null;
+                }
                 IPersistentDataBlockService persistentDataBlockService =
                         IPersistentDataBlockService.Stub.asInterface(b);
                 if (persistentDataBlockService != null) {
@@ -1312,7 +1339,10 @@ public final class SystemServiceRegistry {
                 new StaticServiceFetcher<OemLockManager>() {
             @Override
             public OemLockManager createService() throws ServiceNotFoundException {
-                IBinder b = ServiceManager.getServiceOrThrow(Context.OEM_LOCK_SERVICE);
+                IBinder b = ServiceManager.getService(Context.OEM_LOCK_SERVICE);
+                if (b == null) {
+                    return null;
+                }
                 IOemLockService oemLockService = IOemLockService.Stub.asInterface(b);
                 if (oemLockService != null) {
                     return new OemLockManager(oemLockService);
@@ -2306,6 +2336,8 @@ public final class SystemServiceRegistry {
                 case Context.CONTEXTHUB_SERVICE:
                 case Context.VIRTUALIZATION_SERVICE:
                 case Context.VIRTUAL_DEVICE_SERVICE:
+                case Context.PERSISTENT_DATA_BLOCK_SERVICE:
+                case Context.OEM_LOCK_SERVICE:
                     return null;
                 case Context.DROPBOX_SERVICE:
                     // If the Dropbox service is missing, we don't want to trigger a WTF, because

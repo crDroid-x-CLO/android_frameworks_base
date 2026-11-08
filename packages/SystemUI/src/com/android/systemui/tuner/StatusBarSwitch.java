@@ -18,10 +18,13 @@ package com.android.systemui.tuner;
 import android.app.ActivityManager;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.res.TypedArray;
+import android.graphics.drawable.Drawable;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 
+import androidx.core.graphics.drawable.DrawableCompat;
 import androidx.preference.SwitchPreferenceCompat;
 
 import com.android.internal.logging.MetricsLogger;
@@ -37,7 +40,7 @@ public class StatusBarSwitch extends SwitchPreferenceCompat implements Tunable {
     private Set<String> mHideList;
 
     public StatusBarSwitch(Context context, AttributeSet attrs) {
-        super(context, attrs);
+        super(context, attrs, androidx.preference.R.attr.switchPreferenceCompatStyle);
     }
 
     @Override

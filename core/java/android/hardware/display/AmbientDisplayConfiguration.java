@@ -20,7 +20,10 @@ import static android.provider.Settings.Secure.SCREEN_OFF_UNLOCK_UDFPS_ENABLED;
 
 import android.annotation.TestApi;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.biometrics.Flags;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.SystemProperties;
 import android.provider.Settings;
@@ -40,7 +43,8 @@ import java.util.Map;
  */
 @TestApi
 public class AmbientDisplayConfiguration {
-    private static final String TAG = "AmbientDisplayConfig";
+    private static final IntentFilter sIntentFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+
     private final Context mContext;
     private final boolean mAlwaysOnByDefault;
     private final boolean mPickupGestureEnabledByDefault;
@@ -58,7 +62,8 @@ public class AmbientDisplayConfiguration {
             Settings.Secure.DOZE_DOUBLE_TAP_GESTURE,
             Settings.Secure.DOZE_WAKE_LOCK_SCREEN_GESTURE,
             Settings.Secure.DOZE_WAKE_DISPLAY_GESTURE,
-            Settings.Secure.DOZE_TAP_SCREEN_GESTURE
+            Settings.Secure.DOZE_TAP_SCREEN_GESTURE,
+            Settings.Secure.DOZE_ON_CHARGE
     };
 
     /** Non-user configurable doze settings */
@@ -94,9 +99,14 @@ public class AmbientDisplayConfiguration {
         return pulseOnNotificationEnabled(user)
                 || pulseOnLongPressEnabled(user)
                 || alwaysOnEnabled(user)
+                || edgeLightEnabled(user)
+                || isAmbientTickerEnabled(user)
                 || wakeLockScreenGestureEnabled(user)
                 || wakeDisplayGestureEnabled(user)
                 || pickupGestureEnabled(user)
+                || tiltGestureEnabled(user)
+                || handwaveGestureEnabled(user)
+                || pocketGestureEnabled(user)
                 || tapGestureEnabled(user)
                 || doubleTapGestureEnabled(user)
                 || quickPickupSensorEnabled(user)
@@ -117,6 +127,11 @@ public class AmbientDisplayConfiguration {
     }
 
     /** @hide */
+    public boolean isAmbientTickerEnabled(int user) {
+        return boolSettingDefaultOff(Settings.Secure.PULSE_ON_NEW_TRACKS, user);
+    }
+
+    /** @hide */
     public boolean pickupGestureEnabled(int user) {
         return boolSetting(Settings.Secure.DOZE_PICK_UP_GESTURE, user,
                 mPickupGestureEnabledByDefault ? 1 : 0)
@@ -126,6 +141,40 @@ public class AmbientDisplayConfiguration {
     /** @hide */
     public boolean dozePickupSensorAvailable() {
         return mContext.getResources().getBoolean(R.bool.config_dozePulsePickup);
+    }
+
+    /** @hide */
+    public boolean tiltGestureEnabled(int user) {
+        return boolSettingDefaultOff(Settings.Secure.DOZE_TILT_GESTURE, user)
+                && dozeTiltSensorAvailable();
+    }
+
+    /** @hide */
+    public boolean dozeTiltSensorAvailable() {
+        return mContext.getResources().getBoolean(R.bool.config_dozePulseTilt);
+    }
+
+    /** @hide */
+    public boolean handwaveGestureEnabled(int user) {
+        return boolSettingDefaultOff(Settings.Secure.DOZE_HANDWAVE_GESTURE, user)
+                && dozeProximitySensorAvailable();
+    }
+
+    /** @hide */
+    public boolean pocketGestureEnabled(int user) {
+        return boolSettingDefaultOff(Settings.Secure.DOZE_POCKET_GESTURE, user)
+                && dozeProximitySensorAvailable();
+    }
+
+    /** @hide */
+    public boolean dozeProximitySensorAvailable() {
+        return mContext.getResources().getBoolean(R.bool.config_dozePulseProximity);
+    }
+
+    /** @hide */
+    public boolean edgeLightEnabled(int user) {
+        return Settings.System.getIntForUser(mContext.getContentResolver(),
+            Settings.System.EDGE_LIGHT_ENABLED, 0, user) != 0;
     }
 
     /** @hide */
@@ -167,12 +216,7 @@ public class AmbientDisplayConfiguration {
 
     /** @hide */
     public boolean screenOffUdfpsEnabled(int user) {
-        if (TextUtils.isEmpty(udfpsLongPressSensorType())) {
-            return false;
-        }
-
-        boolean isScreenOffUnlockEnabled = mScreenOffUdfpsAvailable && Flags.screenOffUnlockUdfps();
-        if (!isScreenOffUnlockEnabled) {
+        if (!mScreenOffUdfpsAvailable) {
             return false;
         } else {
             return boolSetting(SCREEN_OFF_UNLOCK_UDFPS_ENABLED, user,
@@ -255,8 +299,38 @@ public class AmbientDisplayConfiguration {
      */
     @TestApi
     public boolean alwaysOnEnabled(int user) {
-        return boolSetting(Settings.Secure.DOZE_ALWAYS_ON, user, mAlwaysOnByDefault ? 1 : 0)
-                && alwaysOnAvailable() && !accessibilityInversionEnabled(user);
+        return alwaysOnEnabledSetting(user) || alwaysOnChargingEnabled(user);
+    }
+
+    /** @hide */
+    public boolean alwaysOnEnabledSetting(int user) {
+        final boolean alwaysOnEnabled = Settings.Secure.getIntForUser(
+                mContext.getContentResolver(), Settings.Secure.DOZE_ALWAYS_ON,
+                mAlwaysOnByDefault ? 1 : 0, user) == 1;
+        return alwaysOnEnabled && alwaysOnAvailable() && !accessibilityInversionEnabled(user);
+    }
+
+    /** @hide */
+    public boolean alwaysOnChargingEnabledSetting(int user) {
+        return Settings.Secure.getIntForUser(mContext.getContentResolver(),
+            Settings.Secure.DOZE_ON_CHARGE, 0, user) == 1;
+    }
+
+    private boolean alwaysOnChargingEnabled(int user) {
+        if (alwaysOnChargingEnabledSetting(user)) {
+            final Intent intent = mContext.registerReceiver(null, sIntentFilter, Context.RECEIVER_NOT_EXPORTED);
+            if (intent != null) {
+                int status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+                boolean isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                            status == BatteryManager.BATTERY_STATUS_FULL;
+                int plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1);
+                boolean isPlugged = plugged == BatteryManager.BATTERY_PLUGGED_AC || 
+                            plugged == BatteryManager.BATTERY_PLUGGED_USB ||
+                            plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS;
+                return isPlugged && isCharging;
+            }
+        }
+        return false;
     }
 
     /**

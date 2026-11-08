@@ -42,12 +42,15 @@ import android.graphics.Rect;
 import android.graphics.Region;
 import android.os.Handler;
 import android.os.UserHandle;
+
+import android.provider.Settings;
 import android.util.IndentingPrintWriter;
 import android.util.Log;
 import android.util.MathUtils;
 import android.view.Display;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
+import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowInsets;
 import android.view.WindowManager;
@@ -97,10 +100,12 @@ import com.android.systemui.statusbar.QsFrameTranslateController;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.gesture.StatusBarLongPressGestureDetector;
 import com.android.systemui.statusbar.notification.domain.interactor.ActiveNotificationsInteractor;
+import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.stack.AmbientState;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayout;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController;
 import com.android.systemui.statusbar.notification.stack.StackStateAnimator;
+import com.android.systemui.statusbar.NTForbiddenSwipeDownQSController;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.phone.KeyguardStatusBarView;
 import com.android.systemui.statusbar.phone.LightBarController;
@@ -112,9 +117,18 @@ import com.android.systemui.statusbar.policy.CastController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.SplitShadeStateController;
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
+
+import com.android.systemui.tuner.TunerService;
 import com.android.systemui.util.LargeScreenUtils;
+import com.android.systemui.util.ScrimUtils;
 import com.android.systemui.util.kotlin.JavaAdapter;
 import com.android.systemui.utils.windowmanager.WindowManagerProvider;
+
+import com.axion.applocker.AxAppLockerHelper;
+import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
+import com.android.systemui.statusbar.notification.collection.NotificationEntry;
+import android.service.notification.StatusBarNotification;
+import android.view.View;
 
 import lineageos.providers.LineageSettings;
 
@@ -135,6 +149,13 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
     public static final String TAG = "QuickSettingsController";
 
     public static final int SHADE_BACK_ANIM_SCALE_MULTIPLIER = 100;
+
+    private static final String STATUS_BAR_QUICK_QS_PULLDOWN =
+            "lineagesystem:" + LineageSettings.System.STATUS_BAR_QUICK_QS_PULLDOWN;
+    private static final String NOTIFICATION_ROW_TRANSPARENCY =
+            Settings.Secure.NOTIFICATION_ROW_TRANSPARENCY;
+    private static final String NOTIFICATION_ROW_TRANSPARENCY_LOCKSCREEN =
+            Settings.Secure.NOTIFICATION_ROW_TRANSPARENCY_LOCKSCREEN;
 
     private QS mQs;
     private final PerDisplayRepository<ReferenceSysUIDisplaySubcomponent>
@@ -181,6 +202,7 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
     private final AccessibilityManager mAccessibilityManager;
     private final MetricsLogger mMetricsLogger;
     private final Resources mResources;
+    private final TunerService mTunerService;
 
     /** Whether the notifications are displayed full width (no margins on the side). */
     private boolean mIsFullWidth;
@@ -371,7 +393,8 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
             Lazy<CommunalTransitionViewModel> communalTransitionViewModelLazy,
             Lazy<LargeScreenHeaderHelper> largeScreenHeaderHelperLazy,
             WindowManagerProvider windowManagerProvider,
-            SelectedUserInteractor selectedUserInteractor
+            SelectedUserInteractor selectedUserInteractor,
+            TunerService tunerService
     ) {
         mDisplaySubcomponentRepository = displaySubcomponentRepository;
         mShadeDisplaysInteractorLazy = shadeDisplaysInteractorLazy;
@@ -421,6 +444,7 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
         mActiveNotificationsInteractor = activeNotificationsInteractor;
         mCommunalTransitionViewModelLazy = communalTransitionViewModelLazy;
         mJavaAdapter = javaAdapter;
+        mTunerService = tunerService;
 
         mLockscreenShadeTransitionController.addCallback(new LockscreenShadeTransitionCallback());
 
@@ -557,7 +581,8 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
 
     boolean isExpansionEnabled() {
         return mExpansionEnabledPolicy && mExpansionEnabledAmbient
-            && !isRemoteInputActiveWithKeyboardUp();
+            && !isRemoteInputActiveWithKeyboardUp()
+            && !NTForbiddenSwipeDownQSController.get(mPanelView.getContext()).getForbiddenSwipeDownQS();
     }
 
     /** */
@@ -644,6 +669,9 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
                 break;
             case 2: // Left side pulldown
                 showQsOverride = mQs.getView().isLayoutRtl() ? w - region < x : x < region;
+                break;
+            case 3: // pull down anywhere
+                showQsOverride = true;
                 break;
         }
         showQsOverride &= mBarState == StatusBarState.SHADE;
@@ -1147,6 +1175,10 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
         // Update the light bar
         mLightBarController.setQsExpanded(mFullyExpanded);
 
+        if (adjustedExpansionFraction == 1.0f || adjustedExpansionFraction == 0.0f) {
+            updateTransparencyIfNeeded();
+        }
+
         // Update full screen state
         setQsFullScreen(/* qsFullScreen = */ mFullyExpanded && !mSplitShadeEnabled);
     }
@@ -1356,6 +1388,7 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
             int clipTop = (int) (top - currentTranslation - mQsFrame.getTop());
             int clipBottom = (int) (bottom - currentTranslation - mQsFrame.getTop());
             mVisible = qsVisible;
+            ScrimUtils.get().setQsVisible(mVisible);
             mQs.setQsVisible(qsVisible);
             if (mEnableClipping) {
                 mQs.setFancyClipping(
@@ -1687,12 +1720,14 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
         if (isTrackpadThreeFingerSwipe(event)) {
             return false;
         }
+        boolean isSwipeDisabled = NTForbiddenSwipeDownQSController.get(
+                mPanelView.getContext()).getForbiddenSwipeDownQS();
         if (isSplitShadeAndTouchXOutsideQs(event.getX())) {
             mShadeLog.logMotionEvent(event, "handleQsTouch: touch outside QS");
             return false;
         }
         boolean isInStatusBar = event.getY(event.getActionIndex()) < mStatusBarMinHeight;
-        if (isInStatusBar) {
+        if (isInStatusBar && !isSwipeDisabled) {
             if (Flags.statusBarLongPressGestureDetectorPerDisplay()) {
                 int shadeDisplayId = mShadeDisplaysInteractorLazy.get().getDisplayId().getValue();
                 ReferenceSysUIDisplaySubcomponent displaySubcomponent =
@@ -1731,6 +1766,9 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
         // as sometimes the qsExpansionFraction can be a tiny value instead of 0 when in QQS.
         if (!mSplitShadeEnabled && !mLastShadeFlingWasExpanding
                 && computeExpansionFraction() <= 0.01 && mShadeExpandedFraction < 1.0) {
+            setTracking(false);
+        }
+        if (isSwipeDisabled) {
             setTracking(false);
         }
         if (!isExpandImmediate() && isTracking()) {
@@ -1993,6 +2031,11 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
      */
     private void flingQs(float vel, int type, final Runnable onFinishRunnable,
             boolean isClick) {
+        if (type == 0 && NTForbiddenSwipeDownQSController.get(mPanelView.getContext()).getForbiddenSwipeDownQS()) {
+            Log.i(TAG, " can't expand qs since forbidden wipe down QS:" + isExpansionEnabled());
+            traceQsJank(false, false);
+            return;
+        }
         mShadeLog.flingQs(type, isClick);
         float target;
         switch (type) {
@@ -2267,8 +2310,10 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
     private int getDisplayId() {
         return mPanelView.getContext().getDisplayId();
     }
+
     /** */
-    public final class QsFragmentListener implements FragmentHostManager.FragmentListener {
+    public final class QsFragmentListener implements FragmentHostManager.FragmentListener,
+            TunerService.Tunable {
 
         private int mLastDisplayIdWithMediaVisibilityChange = Display.DEFAULT_DISPLAY;
 
@@ -2333,16 +2378,20 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
                     false, mOneFingerQuickSettingsInterceptObserver,
                     UserHandle.USER_ALL);
             mOneFingerQuickSettingsInterceptObserver.onChange(true);
+
+            mTunerService.addTunable(this, STATUS_BAR_QUICK_QS_PULLDOWN);
+            mTunerService.addTunable(this, NOTIFICATION_ROW_TRANSPARENCY);
+            mTunerService.addTunable(this, NOTIFICATION_ROW_TRANSPARENCY_LOCKSCREEN);
             updateExpansion();
         }
-
-
 
         /** */
         @Override
         public void onFragmentViewDestroyed(String tag, Fragment fragment) {
             mPanelView.getContext().getContentResolver().unregisterContentObserver(
                     mOneFingerQuickSettingsInterceptObserver);
+
+            mTunerService.removeTunable(this);
             // Manual handling of fragment lifecycle is only required because this bridges
             // non-fragment and fragment code. Once we are using a fragment for the notification
             // panel, mQs will not need to be null cause it will be tied to the same lifecycle.
@@ -2352,6 +2401,25 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
                 mQs = null;
             }
         }
+
+        @Override
+        public void onTuningChanged(String key, String newValue) {
+            if (STATUS_BAR_QUICK_QS_PULLDOWN.equals(key)) {
+                mOneFingerQuickSettingsIntercept = TunerService.parseInteger(newValue, 0);
+            } else if (NOTIFICATION_ROW_TRANSPARENCY.equals(key) ||
+                    NOTIFICATION_ROW_TRANSPARENCY_LOCKSCREEN.equals(key)) {
+                updateTransparencyIfNeeded();
+            }
+        }
+    }
+
+    private void updateTransparencyIfNeeded() {
+        NotificationStackScrollLayoutController controller = mNotificationStackScrollLayoutController;
+        if (controller == null || controller.getView() == null) {
+            return;
+        }
+        NotificationStackScrollLayout view = controller.getView();
+        view.post(view::updateIfNeeded);
     }
 
     private final class LockscreenShadeTransitionCallback
@@ -2524,5 +2592,15 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
     interface FlingQsWithoutClickListener {
         void onFlingQsWithoutClick(ValueAnimator animator, float qsExpansionHeight,
                 float target, float vel);
+    }
+
+    public final void onAppLockerUpdated(String packageName) {
+        NotificationStackScrollLayoutController controller = mNotificationStackScrollLayoutController;
+        if (controller == null || controller.getView() == null) {
+            return;
+        }
+
+        NotificationStackScrollLayout view = controller.getView();
+        view.post(() -> view.onAppLockerUpdate(packageName));
     }
 }

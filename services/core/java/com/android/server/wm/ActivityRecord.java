@@ -57,7 +57,9 @@ import static android.content.Intent.CATEGORY_HOME;
 import static android.content.Intent.CATEGORY_LAUNCHER;
 import static android.content.Intent.CATEGORY_SECONDARY_HOME;
 import static android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
+import static android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
 import static android.content.Intent.FLAG_ACTIVITY_NO_HISTORY;
+import static android.content.Intent.FLAG_ACTIVITY_RETAIN_IN_RECENTS;
 import static android.content.pm.ActivityInfo.CONFIG_ASSETS_PATHS;
 import static android.content.pm.ActivityInfo.CONFIG_DENSITY;
 import static android.content.pm.ActivityInfo.CONFIG_ORIENTATION;
@@ -2488,6 +2490,10 @@ public final class ActivityRecord extends WindowToken {
     private int getStartingWindowType(boolean newTask, boolean taskSwitch, boolean processRunning,
             boolean allowTaskSnapshot, boolean activityCreated, boolean activityAllDrawn,
             TaskSnapshot snapshot) {
+        boolean isAppLockerActivity = AxSandboxService.get().isAppLockerActivity(this.intent.getComponent());
+        if (AxSandboxService.get().isAppLocked(this) || isAppLockerActivity) {
+            return (isAppLockerActivity || processRunning) ? STARTING_WINDOW_TYPE_NONE : STARTING_WINDOW_TYPE_SPLASH_SCREEN;
+        }
         // A special case that a new activity is launching to an existing task which is moving to
         // front. If the launching activity is the one that started the task, it could be a
         // trampoline that will be always created and finished immediately. Then give a chance to
@@ -3586,6 +3592,9 @@ public final class ActivityRecord extends WindowToken {
      */
     private void finishActivityResults(int resultCode, Intent resultData,
             NeededUriGrants resultGrants) {
+        if (AxSandboxService.get().checkUnlockApp(this, resultCode, resultData)) {
+            resultTo = null;
+        }
         // Send the result if needed
         if (resultTo != null) {
             if (DEBUG_RESULTS) {
@@ -4417,6 +4426,7 @@ public final class ActivityRecord extends WindowToken {
      * finishing or has no saved state or crashed many times, it will also be removed from history.
      */
     void handleAppDied() {
+        AxSandboxService.get().onAppDied(packageName, mUserId);
         final boolean remove;
         if (Process.isSdkSandboxUid(getUid())) {
             // Sandbox activities are created for SDKs run in the sandbox process, when the sandbox
@@ -4793,6 +4803,9 @@ public final class ActivityRecord extends WindowToken {
             }
             return true;
         } else if (fromActivity.mStartingData != null) {
+            if (AxSandboxService.get().isAppLockerActivity(this.intent.getComponent())) {
+                return false;
+            }
             if (fromActivity.mStartingData instanceof SnapshotStartingData
                     && (!isStartingOrientationCompatible(fromActivity)
                     || !(((SnapshotStartingData) fromActivity.mStartingData).isValid()))) {
@@ -6619,7 +6632,9 @@ public final class ActivityRecord extends WindowToken {
             throw new IllegalStateException("Request to stop a finishing activity: " + this);
         }
         if (isNoHistory()) {
-            if (!task.shouldSleepActivities()) {
+            if (AxSandboxService.get().isAppLocked(this)) {
+                Slog.d(TAG_STATES, "AppLocker: Skip no-history finish for locked app " + this);
+            } else if (!task.shouldSleepActivities()) {
                 ProtoLog.d(WM_DEBUG_STATES, "no-history finish of %s", this);
                 if (finishIfPossible("stop-no-history", false /* oomAdj */)
                         != FINISH_RESULT_CANCELLED) {
@@ -9421,6 +9436,12 @@ public final class ActivityRecord extends WindowToken {
                 return false;
             }
         }
+
+        if (AxSandboxService.get().isAppLocked(this)
+            || AxSandboxService.get().isAppLockerActivity(this.intent.getComponent())) {
+            return false;
+        }
+
         return true;
     }
 
@@ -9994,6 +10015,22 @@ public final class ActivityRecord extends WindowToken {
         }
     }
 
+    /**
+     * Determines whether the given activity should be skipped when saving the task to XML.
+     * Stop at first non-persistable or first break in task (CLEAR_WHEN_TASK_RESET).
+     *
+     * @param r The activity record to check.
+     * @param bottomMostActivity The bottom-most activity in the task.
+     * @return {@code true} if the activity should be skipped, {@code false} otherwise.
+     */
+    static boolean shouldSkipSavingToXml(@NonNull ActivityRecord r,
+            @NonNull ActivityRecord bottomMostActivity) {
+        return r.info.persistableMode == ActivityInfo.PERSIST_ROOT_ONLY || !r.isPersistable()
+                || ((r.intent.getFlags() & (FLAG_ACTIVITY_NEW_DOCUMENT
+                | FLAG_ACTIVITY_RETAIN_IN_RECENTS)) == FLAG_ACTIVITY_NEW_DOCUMENT)
+                && r != bottomMostActivity;
+    }
+
     CustomAppTransition getCustomAnimation(boolean open) {
         return open ? mCustomOpenTransition : mCustomCloseTransition;
     }
@@ -10203,5 +10240,9 @@ public final class ActivityRecord extends WindowToken {
 
     public boolean shouldForceLongScreen() {
         return mAtmService.shouldForceLongScreen(packageName);
+    }
+
+    public boolean shouldForceCutoutFullscreen() {
+        return mAtmService.shouldForceCutoutFullscreen(packageName);
     }
 }

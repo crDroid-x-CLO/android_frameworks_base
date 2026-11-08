@@ -21,6 +21,9 @@ import com.android.systemui.CoreStartable
 import com.android.systemui.LatencyTester
 import com.android.systemui.SliceBroadcastRelayHandler
 import com.android.systemui.accessibility.Magnification
+import com.android.systemui.ax.AxPlatformServiceImpl
+import com.android.systemui.axdynamicbar.domain.AxDynamicBarChipsRefiner
+import com.android.systemui.axdynamicbar.ui.AxDynamicBarManager
 import com.android.systemui.back.domain.interactor.BackActionInteractor
 import com.android.systemui.biometrics.BiometricNotificationService
 import com.android.systemui.bouncer.domain.startable.BouncerStartable
@@ -50,7 +53,9 @@ import com.android.systemui.media.taptotransfer.receiver.MediaTttChipControllerR
 import com.android.systemui.media.taptotransfer.sender.MediaTttSenderCoordinator
 import com.android.systemui.mediaprojection.taskswitcher.MediaProjectionTaskSwitcherCoreStartable
 import com.android.systemui.shortcut.ShortcutKeyDispatcher
+import com.android.systemui.smartpixel.ui.SmartPixelManager
 import com.android.systemui.statusbar.ImmersiveModeConfirmation
+import com.android.systemui.statusbar.chips.ui.viewmodel.OngoingActivityChipsRefiner
 import com.android.systemui.statusbar.gesture.GesturePointerEventListener
 import com.android.systemui.statusbar.notification.InstantAppNotifier
 import com.android.systemui.statusbar.notification.headsup.StatusBarHeadsUpChangeListener
@@ -59,10 +64,15 @@ import com.android.systemui.temporarydisplay.chipbar.ChipbarCoordinator
 import com.android.systemui.usb.StorageNotification
 import com.android.systemui.util.NotificationChannels
 import com.android.systemui.wmshell.WMShell
+import com.google.android.systemui.keyguard.AmbientIndicationCoreStartable
+import com.google.android.systemui.smartspace.KeyguardSmartspaceStartable
 import dagger.Binds
 import dagger.Module
 import dagger.multibindings.ClassKey
 import dagger.multibindings.IntoMap
+import dagger.multibindings.IntoSet
+
+import com.axion.applocker.AxAppLockerHelper
 
 /**
  * DEPRECATED: DO NOT ADD THINGS TO THIS FILE. b/427499553
@@ -328,5 +338,45 @@ abstract class SystemUICoreStartableModule {
     @ClassKey(SysUIKeyGestureEventInitializer::class)
     abstract fun bindSysUIKeyGestureEventInitializer(
         keyGestureEventInitializer: SysUIKeyGestureEventInitializer
+    ): CoreStartable
+
+    @Binds
+    @IntoMap
+    @ClassKey(AxAppLockerHelper::class)
+    abstract fun bindAxAppLockerHelper(impl: AxAppLockerHelper): CoreStartable
+
+    @Binds
+    @IntoMap
+    @ClassKey(AxDynamicBarManager::class)
+    abstract fun bindAxDynamicBarManager(impl: AxDynamicBarManager): CoreStartable
+
+    @Binds
+    @IntoSet
+    abstract fun bindDynamicBarChipsRefiner(impl: AxDynamicBarChipsRefiner): OngoingActivityChipsRefiner
+
+    @Binds
+    @IntoMap
+    @ClassKey(AxPlatformServiceImpl::class)
+    abstract fun bindAxPlatformService(impl: AxPlatformServiceImpl): CoreStartable
+
+    /** Inject into KeyguardSmartspaceStartable. */
+    @Binds
+    @IntoMap
+    @ClassKey(KeyguardSmartspaceStartable::class)
+    abstract fun bindKeyguardSmartspaceStartable(impl: KeyguardSmartspaceStartable): CoreStartable
+
+    /** Inject into AmbientIndicationCoreStartable. */
+    @Binds
+    @IntoMap
+    @ClassKey(AmbientIndicationCoreStartable::class)
+    abstract fun bindAmbientIndicationCoreStartable(
+        impl: AmbientIndicationCoreStartable
+    ): CoreStartable
+
+    @Binds
+    @IntoMap
+    @ClassKey(SmartPixelManager::class)
+    abstract fun bindSmartPixelManager(
+        impl: SmartPixelManager
     ): CoreStartable
 }

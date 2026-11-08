@@ -37,6 +37,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
+import android.os.SystemProperties;
 import android.os.Trace;
 import android.view.Surface;
 
@@ -909,7 +910,9 @@ public class ImageReader implements AutoCloseable {
             throw new IllegalStateException("Image was already detached from this ImageReader");
         }
 
-        nativeDetachImage(image, mDetachThrowsIseOnly);
+        if (!SystemProperties.getBoolean("persist.sys.cam.skip_detach_image", false)) {
+            nativeDetachImage(image, mDetachThrowsIseOnly);
+        }
         si.clearSurfacePlanes();
         si.mPlanes = null;
         si.setDetached(true);
@@ -1292,6 +1295,15 @@ public class ImageReader implements AutoCloseable {
             return nativeGetHardwareBuffer();
         }
 
+        // OnePlus camera (APS) extension: returns a HardwareBuffer whose native object is an
+        // sp<GraphicBuffer> holder (the layout APS expects for the picture_metadata stream),
+        // not an AHardwareBuffer. The OnePlus camera SDK calls this reflectively; without it
+        // the SDK falls back to getHardwareBuffer() and APS reads a malformed metadata size.
+        public HardwareBuffer getOplusHardwareBuffer() {
+            throwISEIfImageIsInvalid();
+            return nativeGetOplusHardwareBuffer();
+        }
+
         @Override
         public @NamedDataSpace int getDataSpace() {
             throwISEIfImageIsInvalid();
@@ -1447,6 +1459,7 @@ public class ImageReader implements AutoCloseable {
         private synchronized native int nativeGetFormat(int readerFormat);
         private synchronized native int nativeGetFenceFd();
         private synchronized native HardwareBuffer nativeGetHardwareBuffer();
+        private synchronized native HardwareBuffer nativeGetOplusHardwareBuffer();
     }
 
     private synchronized native void nativeInit(Object weakSelf, int w, int h, int maxImgs,

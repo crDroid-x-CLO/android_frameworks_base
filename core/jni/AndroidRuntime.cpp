@@ -211,6 +211,7 @@ extern int register_android_content_res_Configuration(JNIEnv* env);
 extern int register_android_animation_PropertyValuesHolder(JNIEnv *env);
 extern int register_android_security_Scrypt(JNIEnv *env);
 extern int register_com_android_internal_content_F2fsUtils(JNIEnv* env);
+extern int register_com_android_internal_content_MicrogUtils(JNIEnv* env);
 extern int register_com_android_internal_content_NativeLibraryHelper(JNIEnv *env);
 extern int register_com_android_internal_content_om_OverlayConfig(JNIEnv *env);
 extern int register_com_android_internal_content_om_OverlayManagerImpl(JNIEnv* env);
@@ -268,6 +269,7 @@ static const char* PROFILE_BOOT_CLASS_PATH = "profilebootclasspath";
 static const char* ENABLE_JITZYGOTE_IMAGE = "enable_apex_image";
 // Flag to pass to the runtime when using the JIT Zygote image.
 static const char* kJitZygoteImageOption = "-Xforcejitzygote";
+static const char* kJitZygotePthreadPriorityOption = "-Xjitzygotepthreadpriority:9";
 
 // Feature flag name for disabling lock profiling.
 static const char* DISABLE_LOCK_PROFILING = "disable_lock_profiling";
@@ -678,6 +680,7 @@ int AndroidRuntime::startVm(JavaVM** pJavaVM, JNIEnv** pEnv, bool zygote, bool p
     char jitmaxsizeOptsBuf[sizeof("-Xjitmaxsize:")-1 + PROPERTY_VALUE_MAX];
     char jitinitialsizeOptsBuf[sizeof("-Xjitinitialsize:")-1 + PROPERTY_VALUE_MAX];
     char jitthresholdOptsBuf[sizeof("-Xjitthreshold:")-1 + PROPERTY_VALUE_MAX];
+    char jitwarmupthresholdOptsBuf[sizeof("-Xjitwarmupthreshold:")-1 + PROPERTY_VALUE_MAX];
     char jitprithreadweightOptBuf[sizeof("-Xjitprithreadweight:")-1 + PROPERTY_VALUE_MAX];
     char jittransitionweightOptBuf[sizeof("-Xjittransitionweight:")-1 + PROPERTY_VALUE_MAX];
     char hotstartupsamplesOptsBuf[sizeof("-Xps-hot-startup-method-samples:")-1 + PROPERTY_VALUE_MAX];
@@ -786,6 +789,7 @@ int AndroidRuntime::startVm(JavaVM** pJavaVM, JNIEnv** pEnv, bool zygote, bool p
     if (use_apex_image) {
         ALOGI("Using JIT Zygote image: '%s'\n", kJitZygoteImageOption);
         addOption(kJitZygoteImageOption);
+        addOption(kJitZygotePthreadPriorityOption);
     } else if (parseRuntimeOption("dalvik.vm.boot-image", bootImageBuf, "-Ximage:")) {
         ALOGI("Using dalvik.vm.boot-image: '%s'\n", bootImageBuf);
     } else {
@@ -904,6 +908,9 @@ int AndroidRuntime::startVm(JavaVM** pJavaVM, JNIEnv** pEnv, bool zygote, bool p
     parseRuntimeOption("dalvik.vm.jitmaxsize", jitmaxsizeOptsBuf, "-Xjitmaxsize:");
     parseRuntimeOption("dalvik.vm.jitinitialsize", jitinitialsizeOptsBuf, "-Xjitinitialsize:");
     parseRuntimeOption("dalvik.vm.jitthreshold", jitthresholdOptsBuf, "-Xjitthreshold:");
+    parseRuntimeOption("dalvik.vm.jitwarmupthreshold",
+                       jitwarmupthresholdOptsBuf,
+                       "-Xjitwarmupthreshold:");
     parseRuntimeOption("dalvik.vm.jitpthreadpriority",
                        jitpthreadpriorityOptsBuf,
                        "-Xjitpthreadpriority:");
@@ -1729,6 +1736,7 @@ static const RegJNIRec gRegJNI[] = {
         REG_JNI(register_android_animation_PropertyValuesHolder),
         REG_JNI(register_android_security_Scrypt),
         REG_JNI(register_com_android_internal_content_F2fsUtils),
+        REG_JNI(register_com_android_internal_content_MicrogUtils),
         REG_JNI(register_com_android_internal_content_NativeLibraryHelper),
         REG_JNI(register_com_android_internal_os_FuseAppLoop),
         REG_JNI(register_com_android_internal_os_KernelAllocationStats),

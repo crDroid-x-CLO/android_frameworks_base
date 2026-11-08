@@ -29,6 +29,7 @@
     <protected-broadcast android:name="android.intent.action.SCREEN_OFF" />
     <protected-broadcast android:name="android.intent.action.SCREEN_ON" />
     <protected-broadcast android:name="android.intent.action.USER_PRESENT" />
+    <protected-broadcast android:name="android.intent.action.DISPLAY_STATE_CHANGED" />
     <protected-broadcast android:name="android.intent.action.TIME_SET" />
     <protected-broadcast android:name="android.intent.action.TIME_TICK" />
     <protected-broadcast android:name="android.intent.action.TIMEZONE_CHANGED" />
@@ -556,6 +557,7 @@
     <protected-broadcast android:name="android.intent.action.USER_INFO_CHANGED" />
     <protected-broadcast android:name="android.intent.action.USER_UNLOCKED" />
     <protected-broadcast android:name="android.intent.action.WALLPAPER_CHANGED" />
+    <protected-broadcast android:name="android.intent.action.THEME_ENGINE_CHANGED" />
 
     <protected-broadcast android:name="android.app.action.DEVICE_POLICY_MANAGER_STATE_CHANGED" />
     <protected-broadcast android:name="android.app.action.CHOOSE_PRIVATE_KEY_ALIAS" />
@@ -880,6 +882,7 @@
     <protected-broadcast android:name="android.service.autofill.action.DELAYED_FILL" />
     <protected-broadcast android:name="android.app.action.PROVISIONING_COMPLETED" />
     <protected-broadcast android:name="android.app.action.LOST_MODE_LOCATION_UPDATE" />
+    <protected-broadcast android:name="android.intent.action.DISPLAY_STATE_CHANGED" />
 
     <!-- Added in U -->
     <protected-broadcast android:name="android.intent.action.PROFILE_ADDED" />
@@ -1037,6 +1040,10 @@
         android:protectionLevel="internal|role|knownSigner"
         android:knownCerts="@array/config_setContactsDefaultAccountKnownSigners"
         android:featureFlag="android.provider.new_default_account_api_enabled"/>
+
+    <!-- @hide -->
+    <permission android:name="com.libremobileos.permission.START_FREEFORM"
+                android:protectionLevel="signature|privileged" />
 
     <!-- ====================================================================== -->
     <!-- Permissions for accessing user's calendar                              -->
@@ -11328,11 +11335,6 @@
                  android:permission="android.permission.BIND_INCALL_SERVICE"
                  android:exported="true">
             <meta-data android:name="android.telecom.INCLUDE_SELF_MANAGED_CALLS"
-                       android:value="true" />
-            <!-- Indicates that this service's class may not be present in all builds.
-                 This directs Telecom to verify class existence before attempting to bind,
-                 in order to avoid a ClassNotFoundException. -->
-            <meta-data android:name="android.telecom.CLASS_EXISTENCE_CHECK"
                        android:value="true" />
             <intent-filter>
                 <action android:name="android.telecom.InCallService"/>

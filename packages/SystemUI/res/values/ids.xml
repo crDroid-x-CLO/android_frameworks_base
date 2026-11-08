@@ -223,6 +223,7 @@
     <item type="id" name="keyguard_indication_text" />
     <item type="id" name="keyguard_indication_text_bottom" />
     <item type="id" name="keyguard_root_view" />
+    <item type="id" name="ax_dynamic_bar_keyguard_chip" />
     <item type="id" name="keyguard_settings_button" />
     <item type="id" name="nssl_guideline" />
     <item type="id" name="nssl_placeholder" />
@@ -313,4 +314,11 @@
 
     <!-- Identifier for the phishing animated smart action. -->
     <item type="id" name="is_phishing_animated_action" />
+
+    <!-- Custom overlay on lockscreen/doze -->
+    <item type="id" name="custom_overlay_container" />
+
+    <!-- Clock face -->
+    <item type="id" name="original_text_color" />
+    <item type="id" name="original_typeface" />
 </resources>

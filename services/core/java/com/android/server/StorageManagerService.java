@@ -2580,8 +2580,10 @@ class StorageManagerService extends IStorageManager.Stub
                     final long destroy = extras.getLong("destroy");
 
                     final DropBoxManager dropBox = mContext.getSystemService(DropBoxManager.class);
-                    dropBox.addText(TAG_STORAGE_BENCHMARK, scrubPath(path)
-                            + " " + ident + " " + create + " " + run + " " + destroy);
+                    if (dropBox != null) {
+                        dropBox.addText(TAG_STORAGE_BENCHMARK, scrubPath(path)
+                                + " " + ident + " " + create + " " + run + " " + destroy);
+                    }
 
                     synchronized (mLock) {
                         final VolumeRecord rec = findRecordForPath(path);
@@ -2764,7 +2766,9 @@ class StorageManagerService extends IStorageManager.Stub
                         final long time = extras.getLong("time");
 
                         final DropBoxManager dropBox = mContext.getSystemService(DropBoxManager.class);
-                        dropBox.addText(TAG_STORAGE_TRIM, scrubPath(path) + " " + bytes + " " + time);
+                        if (dropBox != null) {
+                            dropBox.addText(TAG_STORAGE_TRIM, scrubPath(path) + " " + bytes + " " + time);
+                        }
 
                         synchronized (mLock) {
                             final VolumeRecord rec = findRecordForPath(path);
@@ -3575,31 +3579,22 @@ class StorageManagerService extends IStorageManager.Stub
             throw new SecurityException("Only File Manager Apps permitted");
         }
 
-        // We want to call the manageSpaceActivity as a SystemService and clear identity
-        // of the calling App
-        final long token = Binder.clearCallingIdentity();
-        try {
-            Context targetAppContext = mContext.createPackageContextAsUser(packageName,
-                    /* flags= */ 0, UserHandle.of(UserHandle.getUserId(originalUid)));
-            Intent intent = new Intent(Intent.ACTION_DEFAULT);
-            intent.setClassName(packageName,
-                    appInfo.manageSpaceActivityName);
-            intent.setFlags(FLAG_ACTIVITY_NEW_TASK);
+        Intent intent = new Intent(Intent.ACTION_DEFAULT);
+        intent.setClassName(packageName,
+                appInfo.manageSpaceActivityName);
+        intent.setFlags(FLAG_ACTIVITY_NEW_TASK);
 
-            final ActivityOptions options = ActivityOptions.makeBasic()
-                    .setPendingIntentCreatorBackgroundActivityStartMode(
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED);
+        final ActivityOptions options = ActivityOptions.makeBasic()
+                .setPendingIntentCreatorBackgroundActivityStartMode(
+                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED);
 
-            PendingIntent activity = PendingIntent.getActivity(targetAppContext, requestCode,
-                    intent,
-                    FLAG_ONE_SHOT | FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE, options.toBundle());
-            return activity;
-        } catch (PackageManager.NameNotFoundException e) {
-            throw new IllegalArgumentException(
-                    "packageName not found");
-        } finally {
-            Binder.restoreCallingIdentity(token);
-        }
+        ActivityManagerInternal amInternal =
+                LocalServices.getService(ActivityManagerInternal.class);
+        PendingIntent activity = amInternal.getPendingIntentActivityAsApp(
+                requestCode, intent,
+                FLAG_ONE_SHOT | FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE,
+                options.toBundle(), packageName, appInfo.uid);
+        return activity;
     }
 
     @Override
@@ -3798,6 +3793,7 @@ class StorageManagerService extends IStorageManager.Stub
     public @Nullable ParcelFileDescriptor openProxyFileDescriptor(
             int mountId, int fileId, int mode) {
         Slog.v(TAG, "mountProxyFileDescriptor");
+        final int uid = Binder.getCallingUid();
 
         // We only support a narrow set of incoming mode flags
         mode &= MODE_READ_WRITE;
@@ -3808,7 +3804,7 @@ class StorageManagerService extends IStorageManager.Stub
                     Slog.e(TAG, "FuseBridge has not been created");
                     return null;
                 }
-                return mAppFuseBridge.openFile(mountId, fileId, mode);
+                return mAppFuseBridge.openFile(uid, mountId, fileId, mode);
             }
         } catch (FuseUnavailableMountException | InterruptedException error) {
             Slog.v(TAG, "The mount point has already been invalid", error);
@@ -3822,9 +3818,14 @@ class StorageManagerService extends IStorageManager.Stub
         final int userId = UserHandle.getUserId(callingUid);
         final String propertyName = "sys.user." + userId + ".ce_available";
 
-        // Ignore requests to create directories while CE storage is locked
         if (!isCeStorageUnlocked(userId)) {
-            throw new IllegalStateException("Failed to prepare " + appPath);
+            // If the directory already exists, the hardware is clearly unlocked.
+            // We log a warning but allow the code to continue to the vold call.
+            if (new File(appPath).exists()) {
+                Slog.w(TAG, "Storage reported locked, but path exists. Proceeding for: " + appPath);
+            } else {
+                throw new IllegalStateException("Failed to prepare " + appPath);
+            }
         }
 
         // Ignore requests to create directories if CE storage is not available
@@ -4927,13 +4928,22 @@ class StorageManagerService extends IStorageManager.Stub
                     final String packageDataDir =
                             String.format(Locale.US, "/storage/emulated/%d/Android/data/%s/",
                                     userId, pkg);
+                    final String packageMediaDir =
+                            String.format(Locale.US, "/storage/emulated/%d/Android/media/%s/",
+                                    userId, pkg);
 
-                    // Create package obb and data dir if it doesn't exist.
+                    // Create package obb, data and media dir if it doesn't exist.
                     int appUid = UserHandle.getUid(userId, mPmInternal.getPackage(pkg).getUid());
-                    vold.ensureAppDirsCreated(new String[] {packageObbDir, packageDataDir}, appUid);
+                    vold.ensureAppDirsCreated(
+                            new String[] {
+                                    packageObbDir,
+                                    packageDataDir,
+                                    packageMediaDir
+                            },
+                            appUid);
                 }
             } catch (ServiceManager.ServiceNotFoundException | RemoteException e) {
-                Slog.e(TAG, "Unable to create obb and data directories for " + processName,e);
+                Slog.e(TAG, "Unable to create app external storage directories for " + processName, e);
                 return false;
             }
             return true;

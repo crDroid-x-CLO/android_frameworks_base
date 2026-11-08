@@ -1983,7 +1983,7 @@ public class DisplayRotation {
                         }
                     };
                     mSensorManager.registerListener(mHingeAngleSensorEventListener,
-                            hingeAngleSensor, SensorManager.SENSOR_DELAY_FASTEST, getHandler());
+                            hingeAngleSensor, SensorManager.SENSOR_DELAY_NORMAL, getHandler());
                 }
             }
         }

@@ -47,6 +47,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Icon;
 import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.TransitionDrawable;
+import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -66,7 +67,6 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.UiThread;
 import androidx.constraintlayout.widget.ConstraintSet;
 
 import com.android.app.animation.Interpolators;
@@ -103,6 +103,7 @@ import com.android.systemui.media.controls.ui.viewmodel.SeekBarViewModel;
 import com.android.systemui.media.controls.util.MediaDataUtils;
 import com.android.systemui.media.controls.util.MediaUiEventLogger;
 import com.android.systemui.media.dialog.MediaOutputDialogManager;
+import com.android.systemui.media.MediaSessionManager;
 import com.android.systemui.monet.ColorScheme;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.FalsingManager;
@@ -127,6 +128,7 @@ import com.android.systemui.surfaceeffects.view.turbulencenoise.TurbulenceNoiseV
 import com.android.systemui.util.ColorUtilKt;
 import com.android.systemui.util.animation.TransitionLayout;
 import com.android.systemui.util.concurrency.DelayableExecutor;
+import com.android.systemui.util.settings.SecureSettings;
 import com.android.systemui.util.settings.GlobalSettings;
 
 import dagger.Lazy;
@@ -232,6 +234,7 @@ public class MediaControlPanel {
     private TurbulenceNoiseController mTurbulenceNoiseController;
     private LoadingEffect mLoadingEffect;
     private final GlobalSettings mGlobalSettings;
+    private final SecureSettings mSecureSettings;
     private TurbulenceNoiseAnimationConfig mTurbulenceNoiseAnimationConfig;
     private boolean mWasPlaying = false;
     private boolean mButtonClicked = false;
@@ -288,7 +291,8 @@ public class MediaControlPanel {
             CommunalSceneInteractor communalSceneInteractor,
             NotificationLockscreenUserManager lockscreenUserManager,
             GlobalSettings globalSettings,
-            CommunalTransitionAnimatorController.Factory communalAnimationControllerFactory
+            CommunalTransitionAnimatorController.Factory communalAnimationControllerFactory,
+            SecureSettings secureSettings
     ) {
         mContext = context;
         mBackgroundExecutor = backgroundExecutor;
@@ -316,13 +320,17 @@ public class MediaControlPanel {
         });
 
         mGlobalSettings = globalSettings;
-        updateAnimatorDurationScale();
+        mSecureSettings = secureSettings;
     }
 
     /**
      * Clean up seekbar and controller when panel is destroyed
      */
     public void onDestroy() {
+        if (mController != null) {
+            mController.unregisterCallback(mCb);
+            mController = null;
+        }
         if (mSeekBarObserver != null) {
             mSeekBarViewModel.getProgress().removeObserver(mSeekBarObserver);
         }
@@ -409,7 +417,9 @@ public class MediaControlPanel {
     void updateAnimatorDurationScale() {
         if (mSeekBarObserver != null) {
             mSeekBarObserver.setAnimationEnabled(
-                    mGlobalSettings.getFloat(Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f);
+                    mGlobalSettings.getFloat(Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f &&
+                    mSecureSettings.getIntForUser(Settings.Secure.MEDIA_SQUIGGLE_ANIMATION,
+                    1, UserHandle.USER_CURRENT) != 0);
         }
     }
 
@@ -434,6 +444,7 @@ public class MediaControlPanel {
         mSeekBarViewModel.setEnabledChangeListener(mEnabledChangeListener);
         mSeekBarViewModel.setContentDescriptionListener(mContentDescriptionListener);
         mMediaViewController.attach(player);
+        updateAnimatorDurationScale();
 
         vh.getPlayer().setOnLongClickListener(v -> {
             if (mFalsingManager.isFalseLongTap(FalsingManager.LOW_PENALTY)) return true;
@@ -510,8 +521,12 @@ public class MediaControlPanel {
             mToken = token;
         }
 
+        if (mController != null) {
+            mController.unregisterCallback(mCb);
+        }
         if (mToken != null) {
             mController = new MediaController(mContext, mToken);
+            mController.registerCallback(mCb);
         } else {
             mController = null;
         }
@@ -886,6 +901,10 @@ public class MediaControlPanel {
             Drawable artwork;
             boolean isArtworkBound;
             Icon artworkIcon = data.getArtwork();
+            Rect bounds = mContext.getSystemService(android.view.WindowManager.class).getCurrentWindowMetrics().getBounds();
+            int screenWidth = bounds.width();
+            int screenHeight = bounds.height();
+            Drawable albumArt = getScaledBackground(artworkIcon, screenWidth, screenHeight);
             WallpaperColors wallpaperColors = getWallpaperColor(artworkIcon);
             boolean darkTheme = false;
             if (wallpaperColors != null) {
@@ -904,6 +923,8 @@ public class MediaControlPanel {
                             darkTheme, ThemeStyle.CONTENT);
                 } catch (PackageManager.NameNotFoundException e) {
                     Log.w(TAG, "Cannot find icon for package " + data.getPackageName(), e);
+                    mutableColorScheme = new ColorScheme(ColorScheme.GOOGLE_BLUE,
+                            darkTheme, ThemeStyle.CONTENT);
                 }
             }
 
@@ -915,6 +936,9 @@ public class MediaControlPanel {
                     return;
                 }
                 mArtworkBoundId = reqId;
+
+                MediaSessionManager.Companion.get().onAlbumArtChanged(albumArt);
+                MediaSessionManager.Companion.get().onMediaColorsChanged(colorScheme.getAccent1().getS100());
 
                 // Transition Colors to current color scheme
                 boolean colorSchemeChanged;
@@ -966,6 +990,10 @@ public class MediaControlPanel {
                         appIconView.setColorFilter(Color.WHITE);
                     }
                 }
+                Drawable resolvedAppIcon = appIconView.getDrawable();
+                if (resolvedAppIcon != null) {
+                    MediaSessionManager.Companion.get().onAppIconChanged(resolvedAppIcon);
+                }
                 Trace.endAsyncSection(traceName, traceCookie);
             });
         });
@@ -991,7 +1019,11 @@ public class MediaControlPanel {
                     Log.d(TAG, "Cannot load wallpaper color from a recycled bitmap");
                     return null;
                 }
-                return WallpaperColors.fromBitmap(artworkBitmap);
+                try {
+                    return WallpaperColors.fromBitmap(artworkBitmap);
+                } catch (Exception e) {
+                    return null;
+                }
             } else {
                 Drawable artworkDrawable = artworkIcon.loadDrawable(mContext);
                 if (artworkDrawable != null) {
@@ -1481,12 +1513,16 @@ public class MediaControlPanel {
     /**
      * Scale artwork to fill the background of the panel
      */
-    @UiThread
-    private Drawable getScaledBackground(Icon icon, int width, int height) {
+    @Nullable
+    private Drawable getScaledBackground(@Nullable Icon icon, int width, int height) {
         if (icon == null) {
             return null;
         }
         Drawable drawable = icon.loadDrawable(mContext);
+        if (drawable == null) {
+            Log.w(TAG, "Failed to load artwork drawable");
+            return null;
+        }
         Rect bounds = new Rect(0, 0, width, height);
         if (bounds.width() > width || bounds.height() > height) {
             float offsetX = (bounds.width() - width) / 2.0f;
@@ -1549,5 +1585,21 @@ public class MediaControlPanel {
         set.setVisibility(actionId, visible ? ConstraintSet.VISIBLE : notVisibleValue);
         set.setAlpha(actionId, visible ? 1.0f : 0.0f);
     }
-}
 
+    /**
+      * Here is to solve the problem that the panel title and artist are not syncing in time 
+      * @author alphi-wang-cn
+      */ 
+     private final MediaController.Callback mCb = new MediaController.Callback() { 
+         @Override 
+         public void onMetadataChanged(MediaMetadata metadata) { 
+            if (metadata != null && mMediaViewHolder != null) { 
+                 String title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE); 
+                 String artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST); 
+                 mMediaViewHolder.getTitleText().setText(title); 
+                 mMediaViewHolder.getArtistText().setText(artist); 
+                 mMediaViewController.refreshState();        // measure view and refresh the state 
+            }
+         } 
+     };
+}

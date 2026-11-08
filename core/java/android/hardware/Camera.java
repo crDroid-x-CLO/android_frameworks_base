@@ -53,6 +53,7 @@ import android.os.Parcel;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemProperties;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Surface;
@@ -69,6 +70,7 @@ import com.android.internal.app.IAppOpsService;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -179,8 +181,10 @@ public class Camera {
     private static final int CAMERA_MSG_RAW_IMAGE_NOTIFY = 0x200;
     private static final int CAMERA_MSG_PREVIEW_METADATA = 0x400;
     private static final int CAMERA_MSG_FOCUS_MOVE       = 0x800;
+    /* ### QC ADD-ONS: START */
     private static final int CAMERA_MSG_STATS_DATA       = 0x1000;
     private static final int CAMERA_MSG_META_DATA        = 0x2000;
+    /* ### QC ADD-ONS: END */
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     private long mNativeContext; // accessed by native methods
@@ -219,8 +223,10 @@ public class Camera {
     private static final int ENOSYS = -38;
     private static final int EUSERS = -87;
     private static final int EOPNOTSUPP = -95;
+    /* ### QC ADD-ONS: START */
     private CameraDataCallback mCameraDataCallback;
     private CameraMetaDataCallback mCameraMetaDataCallback;
+    /* ### QC ADD-ONS: END */
 
     /**
      * Broadcast Action:  A new picture is taken by the camera, and the entry of
@@ -284,6 +290,25 @@ public class Camera {
     private static final int CAMERA_FACE_DETECTION_SW = 1;
 
     /**
+     * @hide
+     */
+    public static boolean shouldExposeAuxCamera() {
+        /**
+         * Force to expose only two cameras
+         * if the package name does not falls in this bucket
+         */
+        String packageName = ActivityThread.currentOpPackageName();
+        if (packageName == null)
+            return true;
+        List<String> packageList = Arrays.asList(
+                SystemProperties.get("vendor.camera.aux.packagelist", packageName).split(","));
+        List<String> packageExcludelist = Arrays.asList(
+                SystemProperties.get("vendor.camera.aux.packageexcludelist", "").split(","));
+
+        return packageList.contains(packageName) && !packageExcludelist.contains(packageName);
+    }
+
+    /**
      * Returns the number of physical cameras available on this device.
      * The return value of this method might change dynamically if the device
      * supports external cameras and an external camera is connected or
@@ -299,31 +324,13 @@ public class Camera {
      *   cameras or an error was encountered enumerating them.
      */
     public static int getNumberOfCameras() {
-        boolean exposeAuxCamera = false;
-        String packageName = ActivityThread.currentOpPackageName();
-        /* Force to expose only two cameras
-         * if the package name does not falls in this bucket
-         */
-        String packageList = SystemProperties.get("vendor.camera.aux.packagelist");
-        if (packageList.length() > 0) {
-            TextUtils.StringSplitter splitter = new TextUtils.SimpleStringSplitter(',');
-            splitter.setString(packageList);
-            for (String str : splitter) {
-                if (packageName.equals(str)) {
-                    exposeAuxCamera = true;
-                    break;
-                }
-            }
-        }
-// QTI_BEGIN: 2024-09-26: Camera: Remove deprecated JNI method _getNumberOfCameras()
-
-        Context context = ActivityThread.currentApplication().getApplicationContext();
-        int numberOfCameras = getNumberOfCameras(context);
-// QTI_END: 2024-09-26: Camera: Remove deprecated JNI method _getNumberOfCameras()
-        if (exposeAuxCamera == false && (numberOfCameras > 2)) {
+        // QTI_BEGIN: 2024-09-26: Camera: Remove deprecated JNI method _getNumberOfCameras()
+        int numberOfCameras =
+                getNumberOfCameras(ActivityThread.currentApplication().getApplicationContext());
+        // QTI_END: 2024-09-26: Camera: Remove deprecated JNI method _getNumberOfCameras()
+        if (!shouldExposeAuxCamera() && numberOfCameras > 2) {
             numberOfCameras = 2;
         }
-
         return numberOfCameras;
     }
 
@@ -355,7 +362,7 @@ public class Camera {
      *    low-level failure).
      */
     public static void getCameraInfo(int cameraId, CameraInfo cameraInfo) {
-        if(cameraId >= getNumberOfCameras()){
+        if (cameraId >= getNumberOfCameras()) {
             throw new RuntimeException("Unknown camera ID");
         }
         Context context = ActivityThread.currentApplication().getApplicationContext();
@@ -442,6 +449,7 @@ public class Camera {
          * camera is in non-ZSL mode.
          */
         public static final int CAMERA_SUPPORT_MODE_NONZSL = 3;
+         /* ### QC ADD-ONS: END */
         /**
          * The direction that the camera faces. It should be
          * CAMERA_FACING_BACK or CAMERA_FACING_FRONT.
@@ -607,8 +615,10 @@ public class Camera {
         mPostviewCallback = null;
         mUsingPreviewAllocation = false;
         mZoomListener = null;
+        /* ### QC ADD-ONS: START */
         mCameraDataCallback = null;
         mCameraMetaDataCallback = null;
+        /* ### QC ADD-ONS: END */
 
         Looper looper;
         if ((looper = Looper.myLooper()) != null) {
@@ -648,8 +658,8 @@ public class Camera {
 
     /** used by Camera#open, Camera#open(int) */
     Camera(int cameraId, @NonNull Context context, CameraCompatibilityInfo compatInfo) {
-        if(cameraId >= getNumberOfCameras()){
-             throw new RuntimeException("Unknown camera ID");
+        if (cameraId >= getNumberOfCameras()) {
+            throw new RuntimeException("Unknown camera ID");
         }
         Objects.requireNonNull(context);
         final int err = cameraInit(cameraId, context, compatInfo);
@@ -1266,6 +1276,7 @@ public class Camera {
                     mAutoFocusMoveCallback.onAutoFocusMoving(msg.arg1 == 0 ? false : true, mCamera);
                 }
                 return;
+            /* ### QC ADD-ONS: START */
             case CAMERA_MSG_STATS_DATA:
                 int statsdata[] = new int[257];
                 for(int i =0; i<257; i++ ) {
@@ -1281,6 +1292,7 @@ public class Camera {
                     mCameraMetaDataCallback.onCameraMetaData((byte[])msg.obj, mCamera);
                 }
                 return;
+            /* ### QC ADD-ONS: END */
             default:
                 Log.e(TAG, "Unknown message type " + msg.what);
                 return;
@@ -1797,7 +1809,11 @@ public class Camera {
                     } catch (RemoteException e) {
                         Log.e(TAG, "Audio service is unavailable for queries");
                     }
-                    _enableShutterSound(false);
+                    try {
+                        _enableShutterSound(false);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Couldn't disable shutter sound");
+                    }
                 } else {
                     enableShutterSound(mShutterSoundEnabledFromApp);
                 }
@@ -2029,19 +2045,19 @@ public class Camera {
         public Point mouth = null;
 
         /**
-         * {@hide}
+         * @hide
          */
         public int smileDegree = 0;
         /**
-         * {@hide}
+         * @hide
          */
         public int smileScore = 0;
         /**
-         * {@hide}
+         * @hide
          */
         public int blinkDetected = 0;
         /**
-         * {@hide}
+         * @hide
          */
         public int faceRecognised = 0;
     }
@@ -2202,6 +2218,7 @@ public class Camera {
         return camera.new Parameters();
     }
 
+    /* ### QC ADD-ONS: START */
     private static int byteToInt(byte[] b, int offset) {
         int value = 0;
         for (int i = 0; i < 4; i++) {
@@ -2351,6 +2368,7 @@ public class Camera {
         return focus_pos;
     }
 
+    /* ### QC ADD-ONS: END */
     /**
      * Returns a copied {@link Parameters}; for shim use only.
      *
@@ -3899,6 +3917,7 @@ public class Camera {
          * @see #getSceneMode()
          */
         public void setSceneMode(String value) {
+            if(getSupportedSceneModes() == null) return;
             set(KEY_SCENE_MODE, value);
         }
 
@@ -3936,6 +3955,7 @@ public class Camera {
          * @see #getFlashMode()
          */
         public void setFlashMode(String value) {
+	    if(getSupportedFlashModes() == null) return;
             set(KEY_FLASH_MODE, value);
         }
 
@@ -4620,6 +4640,7 @@ public class Camera {
             splitter.setString(str);
             int index = 0;
             for (String s : splitter) {
+                s = s.replaceAll("\\s","");
                 output[index++] = Integer.parseInt(s);
             }
         }
@@ -4690,7 +4711,7 @@ public class Camera {
         // Example string: "(10000,26623),(10000,30000)". Return null if the
         // passing string is null or the size is 0.
         private ArrayList<int[]> splitRange(String str) {
-            if (str == null || str.charAt(0) != '('
+            if (str == null || str.isEmpty() || str.charAt(0) != '('
                     || str.charAt(str.length() - 1) != ')') {
                 Log.e(TAG, "Invalid range list string=" + str);
                 return null;
@@ -4716,7 +4737,7 @@ public class Camera {
         // the passing string is null or the size is 0 or (0,0,0,0,0).
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         private ArrayList<Area> splitArea(String str) {
-            if (str == null || str.charAt(0) != '('
+            if (str == null || str.isEmpty() || str.charAt(0) != '('
                     || str.charAt(str.length() - 1) != ')') {
                 Log.e(TAG, "Invalid area string=" + str);
                 return null;
@@ -4753,7 +4774,9 @@ public class Camera {
             if (s1 != null && s1.equals(s2)) return true;
             return false;
         }
+        /* ### QC ADD-ONS: START */
 
+        /* ### QC ADDED PARAMETER KEYS*/
         private static final String KEY_QC_HFR_SIZE = "hfr-size";
         private static final String KEY_QC_PREVIEW_FRAME_RATE_MODE = "preview-frame-rate-mode";
         private static final String KEY_QC_PREVIEW_FRAME_RATE_AUTO_MODE = "frame-rate-auto";
@@ -4806,6 +4829,7 @@ public class Camera {
         **/
         public static final String KEY_QC_AE_BRACKET_HDR = "ae-bracket-hdr";
 
+        /* ### QC ADDED PARAMETER VALUES*/
 
         // Values for touch af/aec settings.
         /** @hide
@@ -5975,5 +5999,6 @@ public class Camera {
             Log.e(TAG, "Invalid Coordinate parameter string=" + str);
             return null;
          }
+         /* ### QC ADD-ONS: END */
     };
 }

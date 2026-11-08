@@ -21,12 +21,14 @@ import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
 import android.content.Context;
 import android.os.LocaleList;
+import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.text.FontConfig;
 
@@ -118,10 +120,9 @@ public class FontManager {
     /**
      * Indicates a failure due to disabled font updater.
      *
-     * This is typically returned due to missing Linux kernel feature.
-     * The font updater only works with the Linux kernel that has fs-verity feature. The fs-verity
-     * is required after the device shipped with Android 11. Thus the updated device may not have
-     * fs-verity feature and font updater is disabled.
+     * This is returned when fs-verity cannot be enabled for updated font files. Devices that
+     * shipped with Android 11 or later are assumed to support it. Older devices are checked
+     * directly, and the updater stays disabled when the font filesystem does not support it.
      */
     public static final int RESULT_ERROR_FONT_UPDATER_DISABLED = -7;
 
@@ -409,6 +410,36 @@ public class FontManager {
         }
     }
 
+    /** @hide */
+    @RequiresPermission(Manifest.permission.UPDATE_FONTS)
+    public @ResultCode int installCustomFont(@NonNull ParcelFileDescriptor fontFd) {
+        Objects.requireNonNull(fontFd);
+        try {
+            return mIFontManager.installCustomFont(fontFd);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @hide */
+    @RequiresPermission(Manifest.permission.UPDATE_FONTS)
+    public @ResultCode int clearCustomFont() {
+        try {
+            return mIFontManager.clearCustomFont();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @hide */
+    @RequiresPermission(Manifest.permission.UPDATE_FONTS)
+    public @Nullable String getCustomFontName() {
+        try {
+            return mIFontManager.getCustomFontName();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
 
     /**
      * Factory method of the FontManager.

@@ -30,10 +30,12 @@ import com.android.systemui.keyguard.ui.view.layout.sections.AccessibilityAction
 import com.android.systemui.keyguard.ui.view.layout.sections.AodBurnInSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AodNotificationIconsSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AodPromotedNotificationSection
+import com.android.systemui.keyguard.ui.view.layout.sections.AxDynamicBarKeyguardChipSection
 import com.android.systemui.keyguard.ui.view.layout.sections.ClockSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntrySection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultEmergencyButtonSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultIndicationAreaSection
+import com.android.systemui.keyguard.ui.view.layout.sections.DefaultIndicationAreaTopSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultNotificationStackScrollLayoutSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultSettingsPopupMenuSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultShortcutsSection
@@ -42,6 +44,8 @@ import com.android.systemui.keyguard.ui.view.layout.sections.DefaultUdfpsAccessi
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSectionsModule.Companion.KEYGUARD_AMBIENT_INDICATION_AREA_SECTION
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSectionsModule.Companion.KEYGUARD_BATTERY_CHARGING_SECTION
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSliceViewSection
+import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardClockStyleSection
+import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardWeatherViewSection
 import com.android.systemui.keyguard.ui.view.layout.sections.SmartspaceSection
 import java.util.Optional
 import javax.inject.Inject
@@ -60,6 +64,7 @@ class DefaultKeyguardBlueprint
 constructor(
     accessibilityActionsSection: AccessibilityActionsSection,
     defaultIndicationAreaSection: DefaultIndicationAreaSection,
+    defaultIndicationAreaTopSection: DefaultIndicationAreaTopSection,
     defaultDeviceEntrySection: DefaultDeviceEntrySection,
     defaultShortcutsSection: DefaultShortcutsSection,
     @Named(KEYGUARD_AMBIENT_INDICATION_AREA_SECTION)
@@ -74,7 +79,10 @@ constructor(
     aodBurnInSection: AodBurnInSection,
     clockSection: ClockSection,
     smartspaceSection: SmartspaceSection,
+    keyguardWeatherViewSection: KeyguardWeatherViewSection,
     keyguardSliceViewSection: KeyguardSliceViewSection,
+    axDynamicBarKeyguardChipSection: AxDynamicBarKeyguardChipSection,
+    keyguardClockStyleSection: KeyguardClockStyleSection,
     udfpsAccessibilityOverlaySection: DefaultUdfpsAccessibilityOverlaySection,
     defaultEmergencyButtonSection: DefaultEmergencyButtonSection,
 ) : KeyguardBlueprint {
@@ -84,6 +92,8 @@ constructor(
         listOfNotNull(
             accessibilityActionsSection,
             defaultIndicationAreaSection,
+            defaultIndicationAreaTopSection,
+            axDynamicBarKeyguardChipSection,
             defaultShortcutsSection,
             defaultAmbientIndicationAreaSection.getOrNull(),
             defaultSettingsPopupMenuSection,
@@ -95,7 +105,9 @@ constructor(
             smartspaceSection,
             aodBurnInSection,
             clockSection,
+            keyguardWeatherViewSection,
             keyguardSliceViewSection,
+            keyguardClockStyleSection,
             defaultDeviceEntrySection,
             defaultEmergencyButtonSection,
             udfpsAccessibilityOverlaySection, // Add LAST: Intentionally has z-order above others

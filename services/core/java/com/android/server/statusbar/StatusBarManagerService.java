@@ -90,6 +90,7 @@ import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.ServiceManager;
 import android.os.ShellCallback;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.service.notification.NotificationStats;
@@ -232,20 +233,161 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private final boolean mVisibleBackgroundUsersEnabled;
 
     private class DeathRecipient implements IBinder.DeathRecipient {
+        @Override
         public void binderDied() {
-            mBar.asBinder().unlinkToDeath(this,0);
+            // Unused
+        }
+
+        @Override
+        public void binderDied(IBinder who) {
+            final IStatusBar bar = mBar;
+            if (bar == null || bar.asBinder() != who) {
+                Slog.i(TAG, "Ignoring death of stale status bar " + who);
+                return;
+            }
             mBar = null;
             notifyBarAttachChanged();
         }
 
-        public void linkToDeath() {
+        void attach(IStatusBar bar) {
+            final IStatusBar old = mBar;
+            if (old != null && old.asBinder() != bar.asBinder()) {
+                try {
+                    old.asBinder().unlinkToDeath(this, 0);
+                } catch (java.util.NoSuchElementException e) {
+                    // Already dead/unlinked.
+                }
+            }
+            mBar = bar;
             try {
-                mBar.asBinder().linkToDeath(mDeathRecipient,0);
+                bar.asBinder().linkToDeath(this, 0);
             } catch (RemoteException e) {
-                Slog.e(TAG,"Unable to register Death Recipient for status bar", e);
+                // Died before we could link: don't keep a dead binder registered.
+                Slog.e(TAG, "Unable to register Death Recipient for status bar", e);
+                if (mBar == bar) {
+                    mBar = null;
+                }
             }
         }
+    }
 
+    private static final long SYSUI_RESTART_SETTLE_MS = 2_000;
+    private static final long SYSUI_KILL_FALLBACK_MS = 2_000;
+    private static final long SYSUI_RESTART_TIMEOUT_MS = 10_000;
+
+    private boolean mSysUiRestartPending;
+    private boolean mSysUiRestartInFlight;
+    private long mSysUiRegisteredUptime;
+    private int mSysUiUid = Process.INVALID_UID;
+    private String mSysUiProcessName;
+
+    private final Runnable mDispatchSysUiRestart = this::dispatchSystemUiRestart;
+
+    private final Runnable mSysUiRestartTimeout = () -> {
+        if (!mSysUiRestartInFlight) {
+            return;
+        }
+        Slog.w(TAG, "SystemUI did not re-register within " + SYSUI_RESTART_TIMEOUT_MS + "ms");
+        mSysUiRestartInFlight = false;
+        scheduleSystemUiRestart();
+    };
+
+    private void requestSystemUiRestart() {
+        mSysUiRestartPending = true;
+        scheduleSystemUiRestart();
+    }
+
+    private void scheduleSystemUiRestart() {
+        mHandler.removeCallbacks(mDispatchSysUiRestart);
+        if (!mSysUiRestartPending || mSysUiRestartInFlight) {
+            // Re-evaluated when the new SystemUI registers or the in-flight restart times out.
+            return;
+        }
+        final long now = SystemClock.uptimeMillis();
+        long runAt = now;
+        if (mSysUiRegisteredUptime != 0) {
+            runAt = Math.max(runAt, mSysUiRegisteredUptime + SYSUI_RESTART_SETTLE_MS);
+        }
+        if (runAt > now) {
+            Slog.i(TAG, "SystemUI restart deferred by " + (runAt - now) + "ms");
+        }
+        mHandler.postAtTime(mDispatchSysUiRestart, runAt);
+    }
+
+    private void dispatchSystemUiRestart() {
+        if (!mSysUiRestartPending || mSysUiRestartInFlight) {
+            return;
+        }
+        final IStatusBar bar = mBar;
+        if (bar == null) {
+            Slog.i(TAG, "SystemUI restart skipped: status bar not registered");
+            mSysUiRestartPending = false;
+            return;
+        }
+        mSysUiRestartPending = false;
+        mSysUiRestartInFlight = true;
+        mHandler.postDelayed(mSysUiRestartTimeout, SYSUI_RESTART_TIMEOUT_MS);
+
+        if (!killSystemUiProcess()) {
+            askSystemUiToRestart(bar);
+            return;
+        }
+        final IBinder binder = bar.asBinder();
+        mHandler.postDelayed(() -> {
+            if (mSysUiRestartInFlight && mBar == bar && binder.isBinderAlive()) {
+                Slog.w(TAG, "SystemUI survived the kill, asking it to restart itself");
+                askSystemUiToRestart(bar);
+            }
+        }, SYSUI_KILL_FALLBACK_MS);
+    }
+
+    private boolean killSystemUiProcess() {
+        final String processName = getSystemUiProcessName();
+        final int uid = mSysUiUid;
+        if (mActivityManagerInternal == null || processName == null
+                || uid == Process.INVALID_UID) {
+            return false;
+        }
+        Slog.i(TAG, "Restarting SystemUI: killing " + processName + " uid " + uid);
+        try {
+            mActivityManagerInternal.killProcess(processName, uid, "restartSystemUI");
+            return true;
+        } catch (RuntimeException e) {
+            Slog.e(TAG, "Failed to kill SystemUI", e);
+            return false;
+        }
+    }
+
+    private void askSystemUiToRestart(IStatusBar bar) {
+        Slog.i(TAG, "Restarting SystemUI via IStatusBar");
+        try {
+            bar.restartSystemUI();
+        } catch (RemoteException e) {
+            Slog.w(TAG, "restartSystemUI: status bar already gone", e);
+        }
+    }
+
+    private String getSystemUiProcessName() {
+        if (mSysUiProcessName == null) {
+            // SystemUI runs in its package's default process.
+            final ComponentName component = ComponentName.unflattenFromString(
+                    mContext.getResources().getString(
+                            com.android.internal.R.string.config_systemUIServiceComponent));
+            if (component != null) {
+                mSysUiProcessName = component.getPackageName();
+            }
+        }
+        return mSysUiProcessName;
+    }
+
+    private void onStatusBarRegisteredForRestart(int uid) {
+        mSysUiUid = uid;
+        mSysUiRegisteredUptime = SystemClock.uptimeMillis();
+        if (mSysUiRestartInFlight) {
+            mSysUiRestartInFlight = false;
+            mHandler.removeCallbacks(mSysUiRestartTimeout);
+        }
+        scheduleSystemUiRestart();
     }
 
     @FunctionalInterface
@@ -869,6 +1011,11 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                     Slog.e(TAG, "onConfigucrationChanged", e);
                 }
             }
+        }
+
+        @Override
+        public void restartSystemUI() {
+            mHandler.post(StatusBarManagerService.this::requestSystemUiRestart);
         }
     };
 
@@ -1524,9 +1671,10 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceValidCallingUser();
 
         Slog.i(TAG, "registerStatusBar bar=" + bar);
-        mBar = bar;
-        mDeathRecipient.linkToDeath();
+        mDeathRecipient.attach(bar);
         notifyBarAttachChanged();
+        final int callingUid = Binder.getCallingUid();
+        mHandler.post(() -> onStatusBarRegisteredForRestart(callingUid));
         final ArrayMap<String, StatusBarIcon> icons;
         synchronized (mIcons) {
             icons = new ArrayMap<>(mIcons);
@@ -1548,9 +1696,10 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceValidCallingUser();
 
         Slog.i(TAG, "registerStatusBarForAllDisplays bar=" + bar);
-        mBar = bar;
-        mDeathRecipient.linkToDeath();
+        mDeathRecipient.attach(bar);
         notifyBarAttachChanged();
+        final int callingUid = Binder.getCallingUid();
+        mHandler.post(() -> onStatusBarRegisteredForRestart(callingUid));
 
         synchronized (mLock) {
             Map<String, RegisterStatusBarResult> results = new HashMap<>();
@@ -1710,6 +1859,18 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
+    }
+
+    /**
+     * Allows SystemUI restart only
+     */
+    @Override
+    public void restartSystemUI() {
+        enforceStatusBarService();
+        enforceValidCallingUser();
+
+        Slog.i(TAG, "restartSystemUI requested by uid " + Binder.getCallingUid());
+        mHandler.post(this::requestSystemUiRestart);
     }
 
     @Override
@@ -2564,6 +2725,18 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 mBar.startAssist(args);
             } catch (RemoteException e) {
                 Slog.e(TAG, "startAssist", e);
+            }
+        }
+    }
+
+    @Override
+    public void toggleRecentApps() {
+        enforceStatusBarService();
+        if (mBar != null) {
+            try {
+                mBar.toggleRecentApps();
+            } catch (RemoteException e) {
+                Slog.e(TAG, "toggleRecentApps", e);
             }
         }
     }

@@ -195,6 +195,7 @@ open class ClockRegistry(
                 plugin.initialize(clockBuffers)
 
                 var isClockListChanged = false
+                plugin ?: return
                 for (clock in plugin.getClocks()) {
                     val id = clock.clockId
                     val info =
@@ -232,6 +233,7 @@ open class ClockRegistry(
                 plugin: ClockProviderPlugin,
                 manager: PluginLifecycleManager<ClockProviderPlugin>,
             ) {
+                plugin ?: return
                 for (clock in plugin.getClocks()) {
                     val id = clock.clockId
                     val info = availableClocks[id]
@@ -325,6 +327,17 @@ open class ClockRegistry(
     var isRegistered: Boolean = false
         private set
 
+    private fun parseClockSettingsOrNull(raw: String?): ClockSettings? {
+        if (raw.isNullOrBlank()) return null
+        if (raw.equals("null", ignoreCase = true)) return null
+
+        return try {
+            ClockSettings.fromJson(JSONObject(raw))
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     @OpenForTesting
     open fun querySettings() {
         assert.isNotMainThread()
@@ -343,7 +356,7 @@ open class ClockRegistry(
                             Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_FACE,
                         )
                     }
-                json?.let { ClockSettings.fromJson(JSONObject(it)) }
+                parseClockSettingsOrNull(json)
             } catch (ex: Exception) {
                 logger.e("Failed to parse clock settings", ex)
                 null

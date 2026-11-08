@@ -32,7 +32,9 @@ import android.media.MediaMetadata;
 import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.os.Trace;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.service.notification.ZenModeConfig;
 import android.text.TextUtils;
@@ -97,6 +99,7 @@ public class KeyguardSliceProvider extends SliceProvider implements
             "content://com.android.systemui.keyguard/media";
     public static final String KEYGUARD_ACTION_URI =
             "content://com.android.systemui.keyguard/action";
+    private static final String PULSE_ACTION = "com.android.systemui.doze.pulse";
 
     /**
      * Only show alarms that will ring within N hours.
@@ -106,6 +109,8 @@ public class KeyguardSliceProvider extends SliceProvider implements
 
     private static final Object sInstanceLock = new Object();
     private static KeyguardSliceProvider sInstance;
+
+    private static final long MIN_PULSE_INTERVAL_MS = 3000;
 
     protected final Uri mSliceUri;
     protected final Uri mHeaderUri;
@@ -151,6 +156,9 @@ public class KeyguardSliceProvider extends SliceProvider implements
     protected boolean mDozing;
     private int mStatusBarState;
     private boolean mMediaIsVisible;
+    private boolean mPulseOnNewTracks;
+    private long mLastPulseUptimeMs = 0L;
+
     private ContentProviderContextAvailableCallback mContextAvailableCallback;
     @Inject
     WakeLockLogger mWakeLockLogger;
@@ -220,14 +228,13 @@ public class KeyguardSliceProvider extends SliceProvider implements
             synchronized (this) {
                 ListBuilder builder = new ListBuilder(getContext(), mSliceUri,
                         ListBuilder.INFINITY);
-                if (needsMediaLocked()) {
-                    addMediaLocked(builder);
-                } else {
-                    builder.addRow(new RowBuilder(mDateUri).setTitle(mLastText));
-                }
+                addDateLocked(builder);
                 addNextAlarmLocked(builder);
                 addZenModeLocked(builder);
                 addPrimaryActionLocked(builder);
+                if (needsMediaLocked()) {
+                    addMediaLocked(builder);
+                }
                 slice = builder.build();
             }
         } catch (IllegalStateException e) {
@@ -236,6 +243,10 @@ public class KeyguardSliceProvider extends SliceProvider implements
             Trace.endSection();
         }
         return slice;
+    }
+
+    protected void addDateLocked(ListBuilder builder) {
+        builder.setHeader(new ListBuilder.HeaderBuilder(mDateUri).setTitle(mLastText));
     }
 
     protected boolean needsMediaLocked() {
@@ -252,8 +263,11 @@ public class KeyguardSliceProvider extends SliceProvider implements
         if (TextUtils.isEmpty(mMediaTitle)) {
             return;
         }
-        listBuilder.setHeader(new ListBuilder.HeaderBuilder(mHeaderUri).setTitle(mMediaTitle));
-
+        {
+            var titleBuilder = new RowBuilder(mHeaderUri);
+            titleBuilder.setTitle(mMediaTitle);
+            listBuilder.addRow(titleBuilder);
+        }
         if (!TextUtils.isEmpty(mMediaArtist)) {
             RowBuilder albumBuilder = new RowBuilder(mMediaUri);
             albumBuilder.setTitle(mMediaArtist);
@@ -264,6 +278,7 @@ public class KeyguardSliceProvider extends SliceProvider implements
             if (mediaIconCompat != null) {
                 albumBuilder.addEndItem(mediaIconCompat, ListBuilder.ICON_IMAGE);
             }
+            albumBuilder.setEndOfSection(true);
 
             listBuilder.addRow(albumBuilder);
         }
@@ -289,7 +304,8 @@ public class KeyguardSliceProvider extends SliceProvider implements
                 R.drawable.ic_access_alarms_big);
         RowBuilder alarmRowBuilder = new RowBuilder(mAlarmUri)
                 .setTitle(mNextAlarm)
-                .addEndItem(alarmIcon, ListBuilder.ICON_IMAGE);
+                .addEndItem(alarmIcon, ListBuilder.ICON_IMAGE)
+                .setEndOfSection(true);
         builder.addRow(alarmRowBuilder);
     }
 
@@ -306,7 +322,8 @@ public class KeyguardSliceProvider extends SliceProvider implements
                         .getString(R.string.accessibility_quick_settings_dnd))
                 .addEndItem(
                     IconCompat.createWithResource(getContext(), R.drawable.stat_sys_dnd),
-                    ListBuilder.ICON_IMAGE);
+                    ListBuilder.ICON_IMAGE)
+                .setEndOfSection(true);
         builder.addRow(dndBuilder);
     }
 
@@ -319,7 +336,9 @@ public class KeyguardSliceProvider extends SliceProvider implements
 
     @Override
     public boolean onCreateSliceProvider() {
-        mContextAvailableCallback.onContextAvailable(getContext());
+        if (mContextAvailableCallback != null) {
+            mContextAvailableCallback.onContextAvailable(getContext());
+        }
         if (mMediaManager == null) {
             Log.e(TAG, "Dagger injection failed, cannot start. See any above warnings with string: "
                     + "\"No injector for class\"");
@@ -328,21 +347,25 @@ public class KeyguardSliceProvider extends SliceProvider implements
         mMediaWakeLock = new SettableWakeLock(
                 WakeLock.createPartial(getContext(), mWakeLockLogger, "media"), "media");
         synchronized (KeyguardSliceProvider.sInstanceLock) {
-            KeyguardSliceProvider oldInstance = KeyguardSliceProvider.sInstance;
-            if (oldInstance != null) {
-                oldInstance.onDestroy();
+            try {
+                KeyguardSliceProvider oldInstance = KeyguardSliceProvider.sInstance;
+                if (oldInstance != null) {
+                    oldInstance.onDestroy();
+                }
+                mDatePattern = getContext().getString(R.string.system_ui_aod_date_pattern);
+                mPendingIntent = PendingIntent.getActivity(getContext(), 0,
+                        new Intent(getContext(), KeyguardSliceProvider.class),
+                        PendingIntent.FLAG_IMMUTABLE);
+                mMediaManager.addCallback(this);
+                mStatusBarStateController.addCallback(this);
+                mNextAlarmController.addCallback(this);
+                mZenModeController.addCallback(this);
+                KeyguardSliceProvider.sInstance = this;
+                registerClockUpdate();
+                updateClockLocked();
+            } catch (Exception e) {
+                return false;
             }
-            mDatePattern = getContext().getString(R.string.system_ui_aod_date_pattern);
-            mPendingIntent = PendingIntent.getActivity(getContext(), 0,
-                    new Intent(getContext(), KeyguardSliceProvider.class),
-                    PendingIntent.FLAG_IMMUTABLE);
-            mMediaManager.addCallback(this);
-            mStatusBarStateController.addCallback(this);
-            mNextAlarmController.addCallback(this);
-            mZenModeController.addCallback(this);
-            KeyguardSliceProvider.sInstance = this;
-            registerClockUpdate();
-            updateClockLocked();
         }
         return true;
     }
@@ -393,7 +416,7 @@ public class KeyguardSliceProvider extends SliceProvider implements
         }
 
         long limit = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(hours);
-        return mNextAlarmInfo.getTriggerTime() <= limit;
+        return alarmClockInfo.getTriggerTime() <= limit;
     }
 
     /**
@@ -518,6 +541,27 @@ public class KeyguardSliceProvider extends SliceProvider implements
         mMediaArtist = artist;
         mMediaIsVisible = nextVisible;
         notifyChange();
+        if (mPulseOnNewTracks && mMediaIsVisible
+                && !mDozeParameters.getAlwaysOn() && mDozing
+                && !TextUtils.isEmpty(mMediaTitle)) {
+            final long now = SystemClock.uptimeMillis();
+            if (now - mLastPulseUptimeMs >= MIN_PULSE_INTERVAL_MS) {
+                mLastPulseUptimeMs = now;
+                mBgHandler.post(() -> {
+                    try {
+                        Intent intent = new Intent(PULSE_ACTION)
+                                .addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+                        getContext().sendBroadcastAsUser(intent, UserHandle.CURRENT);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error on sendBroadcastAsUser()", e);
+                    }
+                });
+            }
+        }
+    }
+
+    public void setPulseOnNewTracks(boolean enabled) {
+        mPulseOnNewTracks = enabled;
     }
 
     protected void notifyChange() {

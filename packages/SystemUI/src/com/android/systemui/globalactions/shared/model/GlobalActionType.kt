@@ -29,12 +29,13 @@ enum class GlobalActionType(val configKey: String) {
     VOICEASSIST("voiceassist"),
     ASSIST("assist"),
     RESTART("restart"),
+    ONTHEGO("onthego"),
     LOGOUT("logout"),
     EMERGENCY("emergency"),
     SCREENSHOT("screenshot"),
     SYSTEM_UPDATE("system_update"),
     STANDBY("standby"),
-    DEVICECONTROLS("device_controls");
+    DEVICECONTROLS("devicecontrols");
 
     companion object {
         private val KEY_MAP = entries.associateBy { it.configKey }

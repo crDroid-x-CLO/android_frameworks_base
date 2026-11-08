@@ -19,6 +19,7 @@ package com.android.server.wm;
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.app.AppOpsManager.MODE_ALLOWED;
 import static android.app.AppOpsManager.MODE_DEFAULT;
+import static android.app.AppOpsManager.OP_SYSTEM_ALERT_WINDOW;
 import static android.app.AppOpsManager.OP_NONE;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_DREAM;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
@@ -184,6 +185,7 @@ import static com.android.server.wm.WindowStateAnimator.HAS_DRAWN;
 import static com.android.server.wm.WindowStateAnimator.PRESERVED_SURFACE_LAYER;
 import static com.android.server.wm.WindowStateAnimator.READY_TO_SHOW;
 
+import android.Manifest;
 import android.annotation.CallSuper;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -1250,10 +1252,20 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         if (WindowManager.LayoutParams.isSystemAlertWindowType(mAttrs.type)) {
             return TouchOcclusionMode.USE_OPACITY;
         }
-        if (isAnimating(PARENTS, ANIMATION_TYPE_ALL) || inTransition()) {
+        if (isAnimating(PARENTS, ANIMATION_TYPE_ALL) || inTransition() || inInsetsAnimation()) {
             return TouchOcclusionMode.USE_OPACITY;
         }
         return TouchOcclusionMode.BLOCK_UNTRUSTED;
+    }
+
+    private boolean inInsetsAnimation() {
+        if (mControllableInsetProvider != null) {
+            @InsetsType
+            final int insetsType = mControllableInsetProvider.getSource().getType();
+            final InsetsControlTarget target = mControllableInsetProvider.getControlTarget();
+            return target != null && (target.getAnimatingTypes() & insetsType) != 0;
+        }
+        return false;
     }
 
     void updateGlobalScale() {
@@ -2269,7 +2281,10 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         if (task != null && !task.fillsParent()) {
             return false;
         }
-        return isOpaqueDrawn() && fillsDisplay();
+        if (!fillsDisplay()) {
+            return false;
+        }
+        return isOpaqueDrawn();
     }
 
     boolean fillsDisplay() {
@@ -2482,7 +2497,12 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
                 // usually unnoticeable (e.g. covered by rotation animation) and the animation
                 // bounds could be inconsistent, such as depending on when the window applies
                 // its draw transaction with new rotation.
-                final boolean allowExitAnimation = !displayContent.inTransition()
+                final boolean allowExitAnimation =
+                        !(startingWindow
+                                && mActivityRecord != null
+                                && !mActivityRecord.isVisibleRequested()
+                                && mTransitionController.isTransitionOnDisplay(displayContent))
+                        && !displayContent.inTransition()
                         // There will be a new window so the exit animation may not be visible or
                         // look weird if its orientation is changed.
                         && !inRelaunchingActivity();
@@ -2895,8 +2915,10 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
             boolean allowTheaterMode = mWmService.mAllowTheaterModeWakeFromLayout
                     || Settings.Global.getInt(mWmService.mContext.getContentResolver(),
                             Settings.Global.THEATER_MODE_ON, 0) == 0;
-            boolean canTurnScreenOn = mActivityRecord == null || mActivityRecord.currentLaunchCanTurnScreenOn();
-
+            final boolean canTurnScreenOn =
+                    getDisplayContent() != null && getDisplayContent().isTrusted()
+                            && (mActivityRecord == null
+                                    || mActivityRecord.currentLaunchCanTurnScreenOn());
             if (allowTheaterMode && canTurnScreenOn
                     && (mWmService.mAtmService.isDreaming()
                             || !mWmService.mPowerManager.isInteractive(getDisplayId()))) {
@@ -3232,8 +3254,9 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
     }
 
     void setHiddenWhileSuspended(boolean hide) {
+        final int baseType = getBaseType();
         if (mOwnerCanAddInternalSystemWindow
-                || (!isSystemAlertWindowType(mAttrs.type) && mAttrs.type != TYPE_TOAST)) {
+                || (!isSystemAlertWindowType(baseType) && baseType != TYPE_TOAST)) {
             return;
         }
         if (mHiddenWhileSuspended == hide) {
@@ -3315,8 +3338,18 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         if (mAppOpVisibility) {
             // There is a race between the check and the finish calls but this is fine
             // as this would mean we will get another change callback and will reconcile.
-            int mode = mWmService.mAppOps.checkOpNoThrow(mAppOp, uid, packageName);
-            if (mode != MODE_ALLOWED && mode != MODE_DEFAULT) {
+            // OP_SYSTEM_ALERT_WINDOW defaults to MODE_DEFAULT. If the app has the static
+            // SYSTEM_ALERT_WINDOW permission, it is allowed to draw overlays. Otherwise,
+            // we must revoke visibility (e.g. when a temporary grant like MediaProjection ends
+            // and the AppOp reverts to MODE_DEFAULT).
+            final int mode = mWmService.mAppOps.checkOpNoThrow(mAppOp, uid, packageName);
+            final boolean allowed = (mode == MODE_ALLOWED)
+                    || (mAppOp != OP_SYSTEM_ALERT_WINDOW && mode == MODE_DEFAULT)
+                    || (mAppOp == OP_SYSTEM_ALERT_WINDOW && mode == MODE_DEFAULT
+                            && mWmService.mContext.checkPermission(
+                                    Manifest.permission.SYSTEM_ALERT_WINDOW, getPid(), uid)
+                            == PackageManager.PERMISSION_GRANTED);
+            if (!allowed) {
                 mWmService.mAppOps.finishOp(mAppOp, uid, packageName, null /* featureId */);
                 setAppOpVisibilityLw(false);
             }
@@ -5494,6 +5527,14 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
             // Since this relies on mWindowFrames, changes made while layout is deferred are
             // likely to be invalid. Similarly, if it's goneForLayout, mWindowFrames may not be
             // up-to-date and thus can't be relied on.
+            return;
+        }
+        if (!mSurfacePlacementNeeded && !mIsChildWindow && mXOffset == 0 && mYOffset == 0
+                && mWallpaperScale == 1f && mSurfaceTranslationY == 0
+                && mWindowFrames.mRelFrame.top == mWindowFrames.mLastRelFrame.top
+                && mWindowFrames.mRelFrame.left == mWindowFrames.mLastRelFrame.left
+                && mLastSurfaceInsets.equals(mAttrs.surfaceInsets)
+                && mLastSurfacePosition.equals(mSurfacePosition)) {
             return;
         }
 

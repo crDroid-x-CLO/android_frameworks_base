@@ -48,15 +48,18 @@ import android.graphics.drawable.LayerDrawable;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.wifi.SoftApConfiguration;
 import android.net.wifi.WifiConfiguration;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
+import android.net.wifi.WifiSsid;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
+import android.sysprop.TelephonyProperties;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
@@ -81,6 +84,7 @@ import androidx.annotation.VisibleForTesting;
 import androidx.annotation.WorkerThread;
 
 import com.android.internal.logging.UiEventLogger;
+import com.android.internal.util.ArrayUtils;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardUpdateMonitorCallback;
 import com.android.settingslib.DeviceInfoUtils;
@@ -109,6 +113,9 @@ import com.android.systemui.statusbar.core.NewStatusBarIcons;
 import com.android.systemui.statusbar.policy.FiveGServiceClient;
 import com.android.systemui.statusbar.policy.FiveGServiceClient.FiveGServiceState;
 import com.android.systemui.statusbar.policy.FiveGServiceClient.IFiveGStateListener;
+
+import com.android.systemui.statusbar.policy.DataSaverController;
+import com.android.systemui.statusbar.policy.HotspotController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.LocationController;
 import com.android.systemui.toast.SystemUIToast;
@@ -127,6 +134,10 @@ import com.qti.extphone.ExtTelephonyManager;
 import com.qti.extphone.RadioIconType;
 import com.qti.extphone.ServiceCallback;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -189,6 +200,10 @@ public class InternetDetailsContentController implements AccessPointController.A
     private static final String DUAL_DATA_PREFERENCE = "dual_data_preference";
     private static final Uri DUAL_DATA_USER_PREFERENCE = Settings
             .Global.getUriFor(DUAL_DATA_PREFERENCE);
+
+    // Every RILConstants network mode above NETWORK_MODE_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA (22)
+    private static final int NETWORK_MODE_NR_THRESHOLD = 22;
+
     private final FeatureFlags mFeatureFlags;
 
     //Should be accessible only to the main thread.
@@ -242,6 +257,8 @@ public class InternetDetailsContentController implements AccessPointController.A
     private boolean mIsMobileDataEnabled = false;
     private UserRepository mUserRepository;
     private boolean mHasMultipleFullUsers = false;
+    private final HotspotController mHotspotController;
+    private final DataSaverController mDataSaverController;
 
     @VisibleForTesting
     Map<Integer, ServiceState> mSubIdServiceState = new HashMap<>();
@@ -343,6 +360,29 @@ public class InternetDetailsContentController implements AccessPointController.A
                 }
             };
 
+    private final HotspotController.Callback mHotspotCallback =
+            new HotspotController.Callback() {
+                @Override
+                public void onHotspotChanged(boolean enabled, int numDevices) {
+                    if (mCallback != null) {
+                        mCallback.onHotspotChanged();
+                    }
+                }
+
+                @Override
+                public void onHotspotAvailabilityChanged(boolean available) {
+                    if (mCallback != null) {
+                        mCallback.onHotspotChanged();
+                    }
+                }
+            };
+
+    private final DataSaverController.Listener mDataSaverListener = isDataSaving -> {
+        if (mCallback != null) {
+            mCallback.onHotspotChanged();
+        }
+    };
+
     protected List<SubscriptionInfo> getActiveSubscriptionInfoList() {
         return mSubscriptionManager.getActiveSubscriptionInfoList();
     }
@@ -366,6 +406,8 @@ public class InternetDetailsContentController implements AccessPointController.A
             DialogTransitionAnimator dialogTransitionAnimator,
             WifiStateWorker wifiStateWorker,
             FeatureFlags featureFlags,
+            HotspotController hotspotController,
+            DataSaverController dataSaverController,
             ShadeDialogContextInteractor shadeDialogContextInteractor,
             UserRepository userRepository,
             CarrierNameCustomization carrierNameCustomization
@@ -405,6 +447,9 @@ public class InternetDetailsContentController implements AccessPointController.A
         mWifiStateWorker = wifiStateWorker;
         mFeatureFlags = featureFlags;
         mCarrierNameCustomization = carrierNameCustomization;
+
+        mHotspotController = hotspotController;
+        mDataSaverController = dataSaverController;
         mShadeDialogContextInteractor = shadeDialogContextInteractor;
         mUserRepository = userRepository;
         mExtTelephonyManager = ExtTelephonyManager.getInstance(context);
@@ -421,6 +466,8 @@ public class InternetDetailsContentController implements AccessPointController.A
         mAccessPointController.addAccessPointCallback(this);
         mBroadcastDispatcher.registerReceiver(mConnectionStateReceiver, mConnectionStateFilter,
                 mExecutor);
+        mHotspotController.addCallback(mHotspotCallback);
+        mDataSaverController.addCallback(mDataSaverListener);
         // Listen the subscription changes
         mOnSubscriptionsChangedListener = new InternetOnSubscriptionChangedListener();
         refreshHasActiveSubIdOnDds();
@@ -436,7 +483,11 @@ public class InternetDetailsContentController implements AccessPointController.A
         mSubIdTelephonyManagerMap.put(mDefaultDataSubId, mTelephonyManager);
         registerInternetTelephonyCallback(mTelephonyManager, mDefaultDataSubId);
         // Listen the connectivity changes
-        mConnectivityManager.registerDefaultNetworkCallback(mConnectivityManagerNetworkCallback);
+        try {
+            mConnectivityManager.registerDefaultNetworkCallback(mConnectivityManagerNetworkCallback);
+        } catch (Exception e) {
+            // Do nothing
+        }
         mCanConfigWifi = canConfigWifi;
         scanWifiAccessPoints();
         if (mSatelliteManager != null) {
@@ -486,6 +537,8 @@ public class InternetDetailsContentController implements AccessPointController.A
         mKeyguardUpdateMonitor.removeCallback(mKeyguardUpdateCallback);
         mConnectivityManager.unregisterNetworkCallback(mConnectivityManagerNetworkCallback);
         mConnectedWifiInternetMonitor.unregisterCallback();
+        mHotspotController.removeCallback(mHotspotCallback);
+        mDataSaverController.removeCallback(mDataSaverListener);
         mCallback = null;
         if (mSatelliteManager != null) {
             try {
@@ -522,7 +575,16 @@ public class InternetDetailsContentController implements AccessPointController.A
     }
 
     protected int getDefaultDataSubscriptionId() {
-        return mSubscriptionManager.getDefaultDataSubscriptionId();
+        int dds = mSubscriptionManager.getDefaultDataSubscriptionId();
+        if (dds == SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                || !mSubscriptionManager.isActiveSubscriptionId(dds)) {
+            Log.d(TAG, "DDS " + dds + "is invalid or inactive, fallback to first active subId");
+            final int[] activeSubIds = mSubscriptionManager.getActiveSubscriptionIdList();
+            if (!ArrayUtils.isEmpty(activeSubIds)) {
+                dds = activeSubIds[0];
+            }
+        }
+        return dds;
     }
 
     @VisibleForTesting
@@ -1089,6 +1151,12 @@ public class InternetDetailsContentController implements AccessPointController.A
         startActivity(intent, view);
     }
 
+    void launchHotspotSetting(View view) {
+        final Intent intent = new Intent(Settings.ACTION_WIFI_TETHER_SETTING);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(intent, view);
+    }
+
     /**
      * Enable or disable Wi-Fi.
      *
@@ -1108,6 +1176,89 @@ public class InternetDetailsContentController implements AccessPointController.A
     @AnyThread
     public boolean isWifiEnabled() {
         return mWifiStateWorker.isWifiEnabled();
+    }
+
+    boolean isHotspotAvailable() {
+        return mHotspotController.isHotspotSupported();
+    }
+
+    boolean isHotspotEnabled() {
+        return mHotspotController.isHotspotEnabled();
+    }
+
+    boolean isHotspotTransient() {
+        return mHotspotController.isHotspotTransient();
+    }
+
+    int getHotspotNumDevices() {
+        return mHotspotController.getNumConnectedDevices();
+    }
+
+    @AnyThread
+    void setHotspotEnabled(boolean enabled) {
+        mWorkerHandler.post(() -> mHotspotController.setHotspotEnabled(enabled));
+    }
+
+    boolean isDataSaverEnabled() {
+        return mDataSaverController.isDataSaverEnabled();
+    }
+
+    @Nullable
+    CharSequence getHotspotSsid() {
+        if (mWifiManager == null) {
+            return null;
+        }
+        final SoftApConfiguration softApConfig = mWifiManager.getSoftApConfiguration();
+        if (softApConfig == null) {
+            return null;
+        }
+        final WifiSsid wifiSsid = softApConfig.getWifiSsid();
+        return wifiSsid == null ? null : decodeUtf8Ssid(wifiSsid.getBytes());
+    }
+
+    @Nullable
+    private static CharSequence decodeUtf8Ssid(@Nullable byte[] ssidBytes) {
+        if (ssidBytes == null || ssidBytes.length == 0) {
+            return null;
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(ssidBytes))
+                    .toString();
+        } catch (CharacterCodingException e) {
+            if (DEBUG) {
+                Log.d(TAG, "SoftAp SSID is not valid UTF-8");
+            }
+            return null;
+        }
+    }
+
+    CharSequence getHotspotTitle() {
+        final CharSequence ssid = getHotspotSsid();
+        return TextUtils.isEmpty(ssid) ? mContext.getText(R.string.quick_settings_hotspot_label)
+                : ssid;
+    }
+
+    CharSequence getHotspotSummary() {
+        if (isDataSaverEnabled()) {
+            return mContext.getText(
+                    R.string.quick_settings_hotspot_secondary_label_data_saver_enabled);
+        }
+        if (isHotspotTransient()) {
+            return mContext.getText(R.string.quick_settings_hotspot_secondary_label_transient);
+        }
+        if (isHotspotEnabled()) {
+            final int numDevices = getHotspotNumDevices();
+            if (numDevices > 0) {
+                return mContext.getResources().getQuantityString(
+                        R.plurals.quick_settings_internet_hotspot_summary_num_devices,
+                        numDevices, numDevices);
+            }
+            return mContext.getText(R.string.switch_bar_on);
+        }
+        return mContext.getText(R.string.switch_bar_off);
     }
 
     void connectCarrierNetwork() {
@@ -1220,7 +1371,7 @@ public class InternetDetailsContentController implements AccessPointController.A
         int dds = getDefaultDataSubscriptionId();
         if (dds == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
             mHasActiveSubIdOnDds = false;
-            Log.d(TAG, "DDS is INVALID_SUBSCRIPTION_ID");
+            Log.d(TAG, "DDS is still INVALID_SUBSCRIPTION_ID");
             return;
         }
         SubscriptionInfo ddsSubInfo = mSubscriptionManager.getActiveSubscriptionInfo(dds);
@@ -1325,6 +1476,78 @@ public class InternetDetailsContentController implements AccessPointController.A
         tm.setMobileDataPolicyEnabled(TelephonyManager.MOBILE_DATA_POLICY_AUTO_DATA_SWITCH, enable);
     }
 
+    @WorkerThread
+    boolean isFivegSupported() {
+        if (!mContext.getResources().getBoolean(R.bool.config_supportsVONR))
+            return false;
+
+        final TelephonyManager tm = mTelephonyManager;
+        if (tm != null) {
+            try {
+                final long supportedRaf = tm.getSupportedRadioAccessFamily();
+                if (supportedRaf != TelephonyManager.NETWORK_TYPE_BITMASK_UNKNOWN) {
+                    return (supportedRaf & TelephonyManager.NETWORK_TYPE_BITMASK_NR) != 0;
+                }
+            } catch (RuntimeException e) {
+                Log.e(TAG, "Can not read the supported radio access family", e);
+            }
+        }
+        try {
+            for (Integer networkMode : TelephonyProperties.default_network()) {
+                if (networkMode != null && networkMode > NETWORK_MODE_NR_THRESHOLD) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Can not read the default network mode", e);
+        }
+        return false;
+    }
+
+    @WorkerThread
+    boolean isFivegEnabled() {
+        final TelephonyManager tm = mTelephonyManager;
+        if (tm == null) {
+            if (DEBUG) {
+                Log.d(TAG, "TelephonyManager is null, can not read the allowed network types.");
+            }
+            return false;
+        }
+        try {
+            return (tm.getAllowedNetworkTypesForReason(
+                    TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_USER)
+                    & TelephonyManager.NETWORK_TYPE_BITMASK_NR) != 0;
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Can not read the allowed network types", e);
+            return false;
+        }
+    }
+
+    @WorkerThread
+    void setFivegEnabled(boolean enabled) {
+        final TelephonyManager tm = mTelephonyManager;
+        if (tm == null) {
+            if (DEBUG) {
+                Log.d(TAG, "TelephonyManager is null, can not set the allowed network types.");
+            }
+            return;
+        }
+        try {
+            final long allowedNetworkTypes = tm.getAllowedNetworkTypesForReason(
+                    TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_USER);
+            final long newNetworkTypes = enabled
+                    ? (allowedNetworkTypes | TelephonyManager.NETWORK_TYPE_BITMASK_NR)
+                    : (allowedNetworkTypes & ~TelephonyManager.NETWORK_TYPE_BITMASK_NR);
+            if (newNetworkTypes == allowedNetworkTypes) {
+                return;
+            }
+            tm.setAllowedNetworkTypesForReason(
+                    TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_USER, newNetworkTypes);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Can not set the allowed network types", e);
+        }
+    }
+
     boolean isDataStateInService(int subId) {
         final ServiceState serviceState = mSubIdServiceState.getOrDefault(subId,
                 new ServiceState());
@@ -1356,7 +1579,7 @@ public class InternetDetailsContentController implements AccessPointController.A
     }
 
     public boolean isDeviceLocked() {
-        return !mKeyguardStateController.isUnlocked();
+        return false;
     }
 
     int getCurrentSatelliteState() {
@@ -1594,13 +1817,14 @@ public class InternetDetailsContentController implements AccessPointController.A
 
     @Override
     public void onWifiScan(boolean isScan) {
-        if (mCallback != null) {
-            if (!isWifiEnabled() || isDeviceLocked()) {
-                mCallback.onWifiScan(false);
-                return;
-            }
-            mCallback.onWifiScan(isScan);
+        if (mCallback == null) {
+            return;
         }
+        if (!isWifiEnabled() || isDeviceLocked()) {
+            mCallback.onWifiScan(false);
+            return;
+        }
+        mCallback.onWifiScan(isScan);
     }
 
     private class InternetTelephonyCallback extends TelephonyCallback implements
@@ -2008,6 +2232,9 @@ public class InternetDetailsContentController implements AccessPointController.A
         void onFiveGStateOverride();
 
         default void onDataEnabledChanged() {}
+
+        default void onHotspotChanged() {
+        }
     }
 
     private class FiveGStateMonitor implements IFiveGStateListener {
@@ -2049,8 +2276,6 @@ public class InternetDetailsContentController implements AccessPointController.A
                 mCallback.onFiveGStateOverride();
             }
         }
-
-
     }
 
     void makeOverlayToast(int stringId) {

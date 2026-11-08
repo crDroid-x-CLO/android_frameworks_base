@@ -299,6 +299,7 @@ import com.android.internal.policy.DecorView;
 import com.android.internal.policy.PhoneFallbackEventHandler;
 import com.android.internal.protolog.ProtoLog;
 import com.android.internal.util.FastPrintWriter;
+import com.android.internal.util.ViewCacheManager;
 import com.android.internal.view.BaseSurfaceHolder;
 import com.android.internal.view.RootViewSurfaceTaker;
 import com.android.internal.view.SurfaceCallbackHelper;
@@ -679,6 +680,7 @@ public final class ViewRootImpl implements ViewParent,
     private boolean mDragResizing;
     private boolean mDragResizingCujBegun;
     private boolean mInvalidateRootRequested;
+    private boolean mFirstFrameDrawn = true;
     private int mCanvasOffsetX;
     private int mCanvasOffsetY;
     CompatibilityInfo.Translator mTranslator;
@@ -1705,8 +1707,12 @@ public final class ViewRootImpl implements ViewParent,
                     attrs.setSurfaceInsets(view, false /*manual*/, true /*preservePrevious*/);
                 }
 
-                CompatibilityInfo compatibilityInfo =
-                        mDisplay.getDisplayAdjustments().getCompatibilityInfo();
+                CompatibilityInfo compatibilityInfo;
+                if (mDisplay != null) {
+                    compatibilityInfo = mDisplay.getDisplayAdjustments().getCompatibilityInfo();
+                } else {
+                    compatibilityInfo = CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO;
+                }
                 mTranslator = compatibilityInfo.getTranslator();
 
                 // If the application owns the surface, don't enable hardware acceleration
@@ -3357,6 +3363,10 @@ public final class ViewRootImpl implements ViewParent,
             mTraversalScheduled = false;
             removeTraversalBarrier();
             performTraversals(frameTimeNanos);
+            if (mFirstFrameDrawn) {
+                ViewCacheManager.getInstance().onTraversalEnd(this);
+                mFirstFrameDrawn = false;
+            }
         }
     }
 
@@ -7162,7 +7172,9 @@ public final class ViewRootImpl implements ViewParent,
                         + ", globalConfig: " + globalConfig
                         + ", overrideConfig: " + overrideConfig);
 
-        final CompatibilityInfo ci = mDisplay.getDisplayAdjustments().getCompatibilityInfo();
+        final CompatibilityInfo ci = mDisplay != null
+                ? mDisplay.getDisplayAdjustments().getCompatibilityInfo()
+                : CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO;
         if (!ci.equals(CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO)) {
             globalConfig = new Configuration(globalConfig);
             overrideConfig = new Configuration(overrideConfig);
@@ -8466,6 +8478,11 @@ public final class ViewRootImpl implements ViewParent,
 
         private int processPointerEvent(QueuedInputEvent q) {
             final MotionEvent event = (MotionEvent)q.mEvent;
+
+            if (event.getPointerCount() == 3 && isThreeFingersSwipeActive()) {
+                event.setAction(MotionEvent.ACTION_CANCEL);
+                Log.d(mTag, "canceling motionEvent because of threeGesture detecting");
+            }
 
             // Translate the pointer event for compatibility, if needed.
             if (mTranslator != null) {
@@ -14792,5 +14809,14 @@ public final class ViewRootImpl implements ViewParent,
         }
         sDebugWrongThreadInit = enabled;
         return true;
+    }
+
+    private boolean isThreeFingersSwipeActive() {
+        try {
+            return ActivityManager.getService().isThreeFingersSwipeActive();
+        } catch (RemoteException e) {
+            Log.e(mTag, "isThreeFingersSwipeActive exception", e);
+            return false;
+        }
     }
 }

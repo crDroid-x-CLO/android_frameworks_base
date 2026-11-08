@@ -24,6 +24,8 @@ import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.graphics.Region;
 import android.os.Handler;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
@@ -119,8 +121,10 @@ public class HeadsUpManagerImpl
     private final int mMinimumDisplayTimeDefault;
     private final int mMinimumDisplayTimeForUserInitiated;
     private final int mStickyForSomeTimeAutoDismissTime;
-    private final int mAutoDismissTime;
+    private int mAutoDismissTime;
     private final DelayableExecutor mExecutor;
+    private final int mDecayDefault;
+    private boolean mDozing;
 
     private final int mExtensionTime;
 
@@ -204,7 +208,10 @@ public class HeadsUpManagerImpl
                 R.integer.heads_up_notification_minimum_time_for_user_initiated);
         mStickyForSomeTimeAutoDismissTime = resources.getInteger(
                 R.integer.sticky_heads_up_notification_time);
-        mAutoDismissTime = resources.getInteger(R.integer.heads_up_notification_decay);
+        mDecayDefault = resources.getInteger(R.integer.heads_up_notification_decay) / 1000;
+        mAutoDismissTime = Settings.System.getIntForUser(context.getContentResolver(),
+                Settings.System.HEADS_UP_TIMEOUT,
+                mDecayDefault, UserHandle.USER_CURRENT) * 1000;
         mExtensionTime = resources.getInteger(R.integer.ambient_notification_extension_time);
         mTouchAcceptanceDelay = resources.getInteger(R.integer.touch_acceptance_delay);
         mSnoozedPackages = new ArrayMap<>();
@@ -222,11 +229,17 @@ public class HeadsUpManagerImpl
                     mSnoozeLengthMs = packageSnoozeLengthMs;
                     mLogger.logSnoozeLengthChange(packageSnoozeLengthMs);
                 }
+                mAutoDismissTime = Settings.System.getIntForUser(
+                    context.getContentResolver(), Settings.System.HEADS_UP_TIMEOUT,
+                    mDecayDefault, UserHandle.USER_CURRENT) * 1000;
             }
         };
         globalSettings.registerContentObserverAsync(
                 globalSettings.getUriFor(SETTING_HEADS_UP_SNOOZE_LENGTH_MS),
                 /* notifyForDescendants= */ false,
+                settingsObserver);
+        context.getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.HEADS_UP_TIMEOUT), false,
                 settingsObserver);
 
         statusBarStateController.addCallback(mStatusBarStateListener);
@@ -1238,6 +1251,7 @@ public class HeadsUpManagerImpl
 
         @Override
         public void onDozingChanged(boolean isDozing) {
+            mDozing = isDozing;
             if (!isDozing) {
                 // Let's make sure all huns we got while dozing time out within the normal timeout
                 // duration. Otherwise they could get stuck for a very long time
@@ -1410,7 +1424,8 @@ public class HeadsUpManagerImpl
 
             FinishTimeUpdater finishTimeCalculator = () -> {
                 RemainingDuration remainingDuration =
-                        mAvalancheController.getDuration(this, mAutoDismissTime);
+                        mAvalancheController.getDuration(this,
+                        mDozing ? mDecayDefault * 1000 : mAutoDismissTime);
 
                 if (remainingDuration instanceof RemainingDuration.HideImmediately) {
                     if (AvalancheReplaceHunWhenCritical.isEnabled()) {

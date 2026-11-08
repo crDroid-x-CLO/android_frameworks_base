@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onLayoutRectChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
@@ -95,14 +97,30 @@ fun BatteryWithPercent(
         }
 
         if (showPercent) {
-            viewModel.batteryPercent?.let {
-                BasicText(
-                    text = it,
-                    color = colorProducer,
-                    style = textStyle,
-                    maxLines = 1,
-                    modifier = Modifier.align(Alignment.CenterVertically)
-                )
+            val percent = viewModel.batteryPercent
+            val attributionSymbol = viewModel.textModeAttributionSymbol
+
+            if (percent != null || attributionSymbol != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (percent != null) {
+                        BasicText(
+                            text = percent,
+                            color = colorProducer,
+                            style = textStyle,
+                            maxLines = 1,
+                        )
+                    }
+
+                    if (attributionSymbol != null) {
+                        BasicText(
+                            text = attributionSymbol,
+                            color = colorProducer,
+                            style = MaterialTheme.typography.labelLargeEmphasized,
+                            maxLines = 1,
+                            modifier = Modifier.clearAndSetSemantics {},
+                        )
+                    }
+                }
             }
         }
 

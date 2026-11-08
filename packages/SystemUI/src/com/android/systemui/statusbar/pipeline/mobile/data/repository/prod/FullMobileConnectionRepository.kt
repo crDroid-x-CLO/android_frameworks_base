@@ -34,6 +34,7 @@ import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.TableLogBufferFactory
 import com.android.systemui.log.table.logDiffsForTable
+import com.android.systemui.statusbar.pipeline.ims.data.repository.ImsRepositoryImpl
 import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConnectionRepository
@@ -67,6 +68,7 @@ class FullMobileConnectionRepository(
     @Background scope: CoroutineScope,
     private val mobileRepoFactory: MobileConnectionRepositoryImpl.Factory,
     private val carrierMergedRepoFactory: CarrierMergedConnectionRepository.Factory,
+    private val imsRepoFactory: ImsRepositoryImpl.Factory,
 // QTI_BEGIN: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
     slotIndexForSubId:  Flow<Int>? = null,
 // QTI_END: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
@@ -100,6 +102,7 @@ class FullMobileConnectionRepository(
             subscriptionModel,
             defaultNetworkName,
             networkNameSeparator,
+            imsRepoFactory.build(subId),
 // QTI_BEGIN: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
             slotIndexForSubId,
 // QTI_END: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
@@ -567,6 +570,15 @@ class FullMobileConnectionRepository(
                 activeRepo.value.isAllowedDuringAirplaneMode.value,
             )
 
+    override val imsState =
+        activeRepo
+            .flatMapLatest { it.imsState }
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.imsState.value,
+            )
+
     override val hasPrioritizedNetworkCapabilities =
         activeRepo
             .flatMapLatest { it.hasPrioritizedNetworkCapabilities }
@@ -606,6 +618,7 @@ class FullMobileConnectionRepository(
         private val logFactory: TableLogBufferFactory,
         private val mobileRepoFactory: MobileConnectionRepositoryImpl.Factory,
         private val carrierMergedRepoFactory: CarrierMergedConnectionRepository.Factory,
+        private val imsRepoFactory: ImsRepositoryImpl.Factory
     ) {
         fun build(
             subId: Int,
@@ -630,6 +643,7 @@ class FullMobileConnectionRepository(
                 scope,
                 mobileRepoFactory,
                 carrierMergedRepoFactory,
+                imsRepoFactory,
 // QTI_BEGIN: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue
                 slotIndexForSubId,
 // QTI_END: 2024-04-17: Data: SystemUI: Fix ImsStateCallback registration failure issue

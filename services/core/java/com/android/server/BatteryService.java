@@ -74,6 +74,7 @@ import android.os.UserHandle;
 import android.provider.Settings;
 import android.service.battery.BatteryServiceDumpProto;
 import android.sysprop.PowerProperties;
+import android.text.TextUtils;
 import android.util.EventLog;
 import android.util.Slog;
 import android.util.TimeUtils;
@@ -92,9 +93,12 @@ import com.android.server.lights.LogicalLight;
 import org.lineageos.internal.notification.LedValues;
 import org.lineageos.internal.notification.LineageBatteryLights;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileDescriptor;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayDeque;
@@ -311,6 +315,14 @@ public final class BatteryService extends SystemService {
 
     private boolean mBatteryLevelLow;
 
+    private boolean mOemCharger;
+    private boolean mHasOemCharger;
+    private boolean mLastOemCharger;
+
+    private String mOemFastChargerStatusPath;
+    private String mOemFastChargerStatusPath2;
+    private String mOemFastChargerStatusValue;
+
     private long mDischargeStartTime;
     private int mDischargeStartLevel;
 
@@ -470,6 +482,21 @@ public final class BatteryService extends SystemService {
         mLed = new Led(context, getLocalService(LightsManager.class));
         mBatteryStats = BatteryStatsService.getService();
         mActivityManagerInternal = LocalServices.getService(ActivityManagerInternal.class);
+
+        mHasOemCharger = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_hasDashCharger) ||
+                mContext.getResources().getBoolean(com.android.internal.R.bool.config_hasWarpCharger) ||
+                mContext.getResources().getBoolean(com.android.internal.R.bool.config_hasVoocCharger) ||
+                mContext.getResources().getBoolean(com.android.internal.R.bool.config_hasTurboPowerCharger);
+
+        mOemFastChargerStatusPath = mContext.getResources().getString(
+                com.android.internal.R.string.config_oemFastChargerStatusPath);
+        mOemFastChargerStatusPath2 = mContext.getResources().getString(
+                com.android.internal.R.string.config_oemFastChargerStatusPath2);
+        mOemFastChargerStatusValue = mContext.getResources().getString(
+                com.android.internal.R.string.config_oemFastChargerStatusValue);
+        if (TextUtils.isEmpty(mOemFastChargerStatusValue))
+            mOemFastChargerStatusValue = "1";
 
         mCriticalBatteryLevel = mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_criticalBatteryWarningLevel);
@@ -830,6 +857,8 @@ public final class BatteryService extends SystemService {
             mHandler.post(this::notifyChargingPolicyChanged);
         }
 
+        mOemCharger = mHasOemCharger && isOemCharger();
+
         if (force
                 || (mHealthInfo.batteryStatus != mLastBroadcastBatteryStatus
                 || mHealthInfo.batteryHealth != mLastBroadcastBatteryHealth
@@ -841,6 +870,7 @@ public final class BatteryService extends SystemService {
                 || mHealthInfo.maxChargingCurrentMicroamps != mLastBroadcastMaxChargingCurrent
                 || mHealthInfo.maxChargingVoltageMicrovolts != mLastBroadcastMaxChargingVoltage
                 || mInvalidCharger != mLastBroadcastInvalidCharger
+                || mOemCharger != mLastOemCharger
                 || mHealthInfo.batteryCycleCount != mLastBroadcastBatteryCycleCount
                 || mHealthInfo.chargingState != mLastBroadcastChargingState
                 || mHealthInfo.batteryCapacityLevel != mLastBroadcastBatteryCapacityLevel
@@ -1033,6 +1063,7 @@ public final class BatteryService extends SystemService {
                 mLastBroadcastChargeCounter = mHealthInfo.batteryChargeCounterUah;
                 mLastBroadcastBatteryLevelCritical = mBatteryLevelCritical;
                 mLastBroadcastInvalidCharger = mInvalidCharger;
+                mLastOemCharger = mOemCharger;
                 mLastBroadcastBatteryCycleCount = mHealthInfo.batteryCycleCount;
                 mLastBroadcastChargingState = mHealthInfo.chargingState;
                 mLastBroadcastBatteryCapacityLevel = mHealthInfo.batteryCapacityLevel;
@@ -1074,6 +1105,7 @@ public final class BatteryService extends SystemService {
         intent.putExtra(BatteryManager.EXTRA_CYCLE_COUNT, mHealthInfo.batteryCycleCount);
         intent.putExtra(BatteryManager.EXTRA_CHARGING_STATUS, mHealthInfo.chargingState);
         intent.putExtra(BatteryManager.EXTRA_CAPACITY_LEVEL, mHealthInfo.batteryCapacityLevel);
+        intent.putExtra(BatteryManager.EXTRA_OEM_CHARGER, mOemCharger);
         intent.putExtra(BatteryManager.EXTRA_MAXIMUM_CAPACITY, mHealthInfo.batteryFullChargeUah);
         intent.putExtra(
                 BatteryManager.EXTRA_DESIGN_CAPACITY,
@@ -1216,6 +1248,29 @@ public final class BatteryService extends SystemService {
         }
     }
 
+    private boolean isOemCharger() {
+        if (TextUtils.isEmpty(mOemFastChargerStatusPath)
+                && TextUtils.isEmpty(mOemFastChargerStatusPath2))
+            return false;
+        try {
+            boolean isFastCharge = false;
+            boolean isFastCharge2 = false;
+            if (!TextUtils.isEmpty(mOemFastChargerStatusPath)) {
+                isFastCharge = FileUtils.readTextFile(new File(mOemFastChargerStatusPath),
+                        mOemFastChargerStatusValue.length(), null).equals(mOemFastChargerStatusValue);
+            }
+            if (!TextUtils.isEmpty(mOemFastChargerStatusPath2)) {
+                isFastCharge2 = FileUtils.readTextFile(new File(mOemFastChargerStatusPath2),
+                        mOemFastChargerStatusValue.length(), null).equals(mOemFastChargerStatusValue);
+            }
+            return isFastCharge || isFastCharge2;
+        } catch (IOException e) {
+            Slog.e(TAG, "Failed to read oem fast charger status path: "
+                + mOemFastChargerStatusPath + " " + mOemFastChargerStatusPath2);
+        }
+        return false;
+    }
+
     // TODO: Current code doesn't work since "--unplugged" flag in BSS was purposefully removed.
     private void logBatteryStatsLocked() {
         IBinder batteryInfoService = ServiceManager.getService(BatteryStats.SERVICE_NAME);
@@ -1325,6 +1380,7 @@ public final class BatteryService extends SystemService {
                 || mPlugType != mLastBroadcastPlugType
                 || mHealthInfo.maxChargingVoltageMicrovolts != mLastBroadcastMaxChargingVoltage
                 || mInvalidCharger != mLastBroadcastInvalidCharger
+                || mOemCharger != mLastOemCharger
                 || mHealthInfo.batteryCycleCount != mLastBroadcastBatteryCycleCount
                 || mHealthInfo.chargingState != mLastBroadcastChargingState
                 || mHealthInfo.batteryCapacityLevel != mLastBroadcastBatteryCapacityLevel
@@ -1785,6 +1841,7 @@ public final class BatteryService extends SystemService {
         private final int mBatteryLowARGB;
         private final int mBatteryMediumARGB;
         private final int mBatteryFullARGB;
+        private final int mBatteryReallyFullARGB;
         private final int mBatteryLedOn;
         private final int mBatteryLedOff;
         private final int mBatteryLowBehavior;
@@ -1798,6 +1855,8 @@ public final class BatteryService extends SystemService {
                     com.android.internal.R.integer.config_notificationsBatteryMediumARGB);
             mBatteryFullARGB = context.getResources().getInteger(
                     com.android.internal.R.integer.config_notificationsBatteryFullARGB);
+            mBatteryReallyFullARGB = context.getResources().getInteger(
+                    com.android.internal.R.integer.config_notificationsBatteryReallyFullARGB);
             mBatteryLedOn = context.getResources().getInteger(
                     com.android.internal.R.integer.config_notificationsBatteryLedOn);
             mBatteryLedOff = context.getResources().getInteger(

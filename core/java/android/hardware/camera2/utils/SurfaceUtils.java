@@ -20,11 +20,14 @@ import static android.system.OsConstants.EINVAL;
 
 import static com.android.internal.util.Preconditions.checkNotNull;
 
+import android.app.ActivityThread;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.graphics.ImageFormat;
 import android.graphics.PixelFormat;
 import android.hardware.HardwareBuffer;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.os.SystemProperties;
+import android.text.TextUtils;
 import android.util.Range;
 import android.util.Size;
 import android.view.Surface;
@@ -350,6 +353,8 @@ public class SurfaceUtils {
 
     private static boolean isPrivilegedApp() {
         String packageName = ActivityThread.currentOpPackageName();
+        if (packageName == null || packageName.isEmpty() 
+            || packageName.equals("com.google.android.GoogleCamera")) return true;
         String packageList = SystemProperties.get("persist.camera.privapp.list");
 
         if (packageList.length() > 0) {

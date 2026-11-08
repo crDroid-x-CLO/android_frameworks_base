@@ -47,6 +47,7 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 
@@ -57,7 +58,7 @@ import java.util.Locale;
  */
 final class WiredAccessoryManager implements WiredAccessoryCallbacks {
     private static final String TAG = WiredAccessoryManager.class.getSimpleName();
-    private static final boolean LOG = true;
+    private static final boolean LOG = false;
 
     private static final int BIT_HEADSET = (1 << 0);
     private static final int BIT_HEADSET_NO_MIC = (1 << 1);
@@ -75,8 +76,22 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
     private static final String NAME_H2W = "h2w";
     private static final String NAME_USB_AUDIO = "usb_audio";
     private static final String NAME_HDMI_AUDIO = "hdmi_audio";
-    private static final String NAME_HDMI = "hdmi";
+    private static final String NAME_DP_AUDIO = "soc:qcom,msm-ext-disp";
+    // within a device, a single stream supports DP
+    private static final String[] DP_AUDIO_CONNS = {
+            NAME_DP_AUDIO + "/3/1",
+            NAME_DP_AUDIO + "/2/1",
+            NAME_DP_AUDIO + "/1/1",
+            NAME_DP_AUDIO + "/0/1",
+            NAME_DP_AUDIO + "/3/0",
+            NAME_DP_AUDIO + "/2/0",
+            NAME_DP_AUDIO + "/1/0",
+            NAME_DP_AUDIO + "/0/0"
+    };
 
+    private static final String NAME_HDMI = "hdmi";
+    private static final String INTF_DP = "DP";
+    private static final String INTF_HDMI = "HDMI";
     private static final int MSG_NEW_DEVICE_STATE = 1;
     private static final int MSG_SYSTEM_READY = 2;
 
@@ -86,25 +101,14 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
     private final AudioManager mAudioManager;
 
     private int mHeadsetState;
+    private int mDpCount;
+    private String mDetectedIntf = INTF_DP;
 
     private final WiredAccessoryObserver mObserver;
     private final WiredAccessoryExtconObserver mExtconObserver;
     private final InputManagerService mInputManager;
 
     private final boolean mUseDevInputEventForAudioJack;
-
-    private static final int MAX_DP_COUNT = 2;
-    private static final String INTF_DP = "DP";
-    private static final String INTF_HDMI = "HDMI";
-    private int mDpCount;
-    private String mDetectedIntf = INTF_DP;
-    private static final String NAME_DP_AUDIO = "soc:qcom,msm-ext-disp";
-    private static final String[] DP_AUDIO_CONNS = {
-                                                     NAME_DP_AUDIO + "/3/0",
-                                                     NAME_DP_AUDIO + "/2/0",
-                                                     NAME_DP_AUDIO + "/1/0",
-                                                     NAME_DP_AUDIO + "/0/0"
-                                                   };
 
     public WiredAccessoryManager(Context context, InputManagerService inputManager) {
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
@@ -246,14 +250,15 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
      * results in support for the last one plugged in. Similarly, unplugging either is seen as
      * unplugging all.
      *
-     * For Display port allow upto two connections.
+     * For Display port allow up to two connections.
      * Block display port request if HDMI already connected and vice versa.
      *
      * @param newName  One of the NAME_xxx variables defined above.
      * @param newState 0 or one of the BIT_xxx variables defined above.
      * @param isSynchronous boolean to determine whether should happen sync or async
      */
-    private void updateLocked(String newName, String address, int newState, boolean isSynchronous) {
+    private void updateLocked(String newName, String address, int newState,
+            boolean isSynchronous) {
         // Retain only relevant bits
         int headsetState = newState & SUPPORTED_HEADSETS;
         int newDpState = newState & BIT_HDMI_AUDIO;
@@ -262,13 +267,11 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
         int h2w_headset = headsetState & (BIT_HEADSET | BIT_HEADSET_NO_MIC | BIT_LINEOUT);
         boolean h2wStateChange = true;
         boolean usbStateChange = true;
-        boolean dpBitState = (mHeadsetState & BIT_HDMI_AUDIO) > 0 ? true: false;
-        boolean dpCountState = (mDpCount == 0) ? false: true;
-
+        boolean dpBitState = (mHeadsetState & BIT_HDMI_AUDIO) > 0;
+        boolean dpCountState = mDpCount != 0;
         if (LOG) {
             Slog.v(TAG, "newName=" + newName
                     + " newState=" + newState
-                    + " address=" + address
                     + " headsetState=" + headsetState
                     + " prev headsetState=" + mHeadsetState
                     + " num of active dp conns= " + mDpCount);
@@ -299,11 +302,11 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
 
         if (newName.startsWith(NAME_DP_AUDIO)) {
             if ((newDpState > 0) && (mDpCount < DP_AUDIO_CONNS.length)
-                        && (dpBitState == dpCountState)) {
+                    && (dpBitState == dpCountState)) {
                 // Allow DP0 if no HDMI previously connected.
                 // Allow second request only if DP connected previously.
                 mDpCount++;
-            } else if ((newDpState == 0) && (mDpCount > 0)){
+            } else if ((newDpState == 0) && (mDpCount > 0)) {
                 mDpCount--;
             } else {
                 Log.e(TAG, "No state change for DP.");
@@ -311,35 +314,31 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             }
         }
 
-        mWakeLock.acquire();
-
-        Log.i(TAG, "MSG_NEW_DEVICE_STATE");
-
-        // send a combined name, address string separated by |
-        if (newName.startsWith(NAME_DP_AUDIO)) {
-            int pseudoHeadsetState = mHeadsetState;
-            if (dpBitState && (newDpState != 0)) {
-                // One DP already connected, so allow request to connect second.
-                pseudoHeadsetState = mHeadsetState & (~BIT_HDMI_AUDIO);
-            }
-            Message msg = mHandler.obtainMessage(MSG_NEW_DEVICE_STATE, headsetState,
-                                         pseudoHeadsetState,
-                                         NAME_DP_AUDIO+"/"+address);
-            mHandler.sendMessage(msg);
-
-            if (mDpCount != 0) {
-                // Atleast one DP is connected, so keep mHeadsetState's DP bit set.
-                headsetState = headsetState | BIT_HDMI_AUDIO;
-            }
+        if (isSynchronous) {
+            setDevicesState(headsetState, mHeadsetState, "");
         } else {
-            if (isSynchronous) {
-              setDevicesState(headsetState, mHeadsetState, newName+"/"+address);
+            mWakeLock.acquire();
+            Log.i(TAG, "MSG_NEW_DEVICE_STATE");
+            // Send a combined name, address string separated by |
+            Message msg;
+            if (newName.startsWith(NAME_DP_AUDIO)) {
+                int pseudoHeadsetState = mHeadsetState;
+                if (dpBitState && (newDpState != 0)) {
+                    // One DP already connected, so allow request to connect second.
+                    pseudoHeadsetState = mHeadsetState & (~BIT_HDMI_AUDIO);
+                }
+                msg = mHandler.obtainMessage(MSG_NEW_DEVICE_STATE, headsetState,
+                        pseudoHeadsetState, NAME_DP_AUDIO + "/" + address);
+
+                if ((headsetState == 0) && (mDpCount != 0)) {
+                    // Atleast one DP is connected, so keep mHeadsetState's DP bit set.
+                    headsetState = headsetState | BIT_HDMI_AUDIO;
+                }
             } else {
-              Message msg = mHandler.obtainMessage(MSG_NEW_DEVICE_STATE, headsetState,
-                                           mHeadsetState,
-                                           newName+"/"+address);
-              mHandler.sendMessage(msg);
+                msg = mHandler.obtainMessage(MSG_NEW_DEVICE_STATE, headsetState,
+                        mHeadsetState, newName + "/" + address);
             }
+            mHandler.sendMessage(msg);
         }
 
         mHeadsetState = headsetState;
@@ -368,7 +367,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             for (int curHeadset = 1; allHeadsets != 0; curHeadset <<= 1) {
                 if ((curHeadset & allHeadsets) != 0) {
                     setDeviceStateLocked(curHeadset, headsetState, prevHeadsetState,
-                                         headsetNameAddr);
+                            headsetNameAddr);
                     allHeadsets &= ~curHeadset;
                 }
             }
@@ -407,23 +406,18 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             }
 
             if (LOG) {
-                Slog.v(TAG, "headset: " + headsetNameAddr +
-                       (state == 1 ? " connected" : " disconnected"));
+                Slog.v(TAG, "headsetNameAddr: " + headsetNameAddr +
+                        (state == 1 ? " connected" : " disconnected"));
             }
 
             String[] hs = headsetNameAddr.split("/");
             if (outDevice != 0) {
-                if (LOG) {
-                    Slog.v(TAG, "Output device address " + (hs.length > 1 ? hs[1] : "")
-                           + " name " + hs[0]);
-                }
                 mAudioManager.setWiredDeviceConnectionState(outDevice, state,
-                                                             (hs.length > 1 ? hs[1] : ""), hs[0]);
+                        (hs.length > 1 ? hs[1] : ""), hs[0]);
             }
             if (inDevice != 0) {
-
-              mAudioManager.setWiredDeviceConnectionState(inDevice, state,
-                                                           (hs.length > 1 ? hs[1] : ""), hs[0]);
+                mAudioManager.setWiredDeviceConnectionState(inDevice, state,
+                        (hs.length > 1 ? hs[1] : ""), hs[0]);
             }
         }
     }
@@ -449,10 +443,15 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             mUEventInfo = makeObservedUEventList();
         }
 
+        int uEventCount() {
+            return mUEventInfo.size();
+        }
+
         void init() {
             synchronized (mLock) {
                 if (LOG) Slog.v(TAG, "init()");
                 char[] buffer = new char[1024];
+
                 for (int i = 0; i < mUEventInfo.size(); ++i) {
                     UEventInfo uei = mUEventInfo.get(i);
                     try {
@@ -461,11 +460,12 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                         FileReader file = new FileReader(switchStatePath);
                         int len = file.read(buffer, 0, 1024);
                         file.close();
-                        curState = Integer.parseInt((new String(buffer, 0, len)).trim());
+                        curState = Integer.parseInt(
+                                (new String(buffer, 0, len).replaceAll("\\D+","")).trim());
 
                         if (curState > 0) {
                             int index = switchStatePath.lastIndexOf(".");
-                            if(switchStatePath.substring(index + 1, index + 2).equals("1")) {
+                            if (switchStatePath.substring(index + 1, index + 2).equals("1")) {
                                 mDetectedIntf = INTF_HDMI;
                             }
                             updateStateLocked(uei.getDevPath(), uei.getDevName(), curState);
@@ -537,18 +537,19 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                 }
             }
 
-
-            int streamIndex = MAX_DP_COUNT - 1;
             for (String conn : DP_AUDIO_CONNS) {
                 // Monitor DisplayPort
+                if (LOG) {
+                    Slog.v(TAG, "Monitor DP conn " + conn);
+                }
                 uei = new UEventInfo(conn, BIT_HDMI_AUDIO, 0, 0);
                 if (uei.checkSwitchExists()) {
-                    uei.setStreamIndex(streamIndex);
-                    streamIndex--;
-                    Slog.i(TAG, "Adding " + conn + " with " + uei.toString() + " to monitor list");
                     retVal.add(uei);
+                } else {
+                    Slog.w(TAG, "Conn " + conn + " does not have DP audio support");
                 }
             }
+
             return retVal;
         }
 
@@ -557,44 +558,41 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             String devPath = event.get("DEVPATH");
             String name = event.get("NAME");
             int state = 0;
-            if (LOG) {
-                Slog.v(TAG, "onUEvent event=" + event.toString());
-            }
-            if (name == null)
+
+            if (name == null) {
                 name = event.get("SWITCH_NAME");
+            }
 
             try {
                 if (name.startsWith(NAME_DP_AUDIO)) {
-                    String state_str = event.get("STATE");
+                    String stateStr = event.get("STATE");
                     int offset = 0;
-                    int length = state_str.length();
+                    int length = stateStr.length();
 
-                    //parse DP=1\nHDMI=1\0
+                    // parse DP=1\nHDMI=1\0
                     while (offset < length) {
-                        int equals = state_str.indexOf('=', offset);
+                        int equals = stateStr.indexOf('=', offset);
 
                         if (equals > offset) {
-                            String intf_name = state_str.substring(offset,
-                                                                   equals);
+                            String intfName = stateStr.substring(offset, equals);
 
-                            if (intf_name.equals("DP") || intf_name.equals("HDMI")) {
+                            if (intfName.equals("DP") || intfName.equals("HDMI")) {
                                 state = Integer.parseInt(
-                                            state_str.substring(equals + 1,
-                                                                equals + 2));
+                                        stateStr.substring(equals + 1, equals + 2));
                                 if (state == 1) {
-                                    mDetectedIntf = intf_name;
+                                    mDetectedIntf = intfName;
                                     break;
                                 }
                             }
                         }
 
                         offset = equals + 3;
-                     }
+                    }
                 } else {
                     state = Integer.parseInt(event.get("SWITCH_STATE"));
                 }
             } catch (NumberFormatException e) {
-                 Slog.i(TAG, "couldn't get state from event, checking node");
+                Slog.i(TAG, "couldn't get state from event, checking node");
 
                 for (int i = 0; i < mUEventInfo.size(); ++i) {
                     UEventInfo uei = mUEventInfo.get(i);
@@ -604,20 +602,18 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                         int len = 0;
 
                         try {
-                            FileReader file = new FileReader(
-                                                      uei.getSwitchStatePath());
+                            FileReader file = new FileReader(uei.getSwitchStatePath());
                             len = file.read(buffer, 0, 1024);
                             file.close();
                         } catch (FileNotFoundException e1) {
                             Slog.e(TAG, "file not found");
                             break;
                         } catch (Exception e11) {
-                            Slog.e(TAG, "" , e11);
+                            Slog.e(TAG, "onUEvent exception", e11);
                         }
 
                         try {
-                             state = Integer.parseInt(
-                                         (new String(buffer, 0, len)).trim());
+                            state = Integer.parseInt((new String(buffer, 0, len)).trim());
                         } catch (NumberFormatException e2) {
                             Slog.e(TAG, "could not convert to number");
                             break;
@@ -636,15 +632,18 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             for (int i = 0; i < mUEventInfo.size(); ++i) {
                 UEventInfo uei = mUEventInfo.get(i);
                 if (devPath.equals(uei.getDevPath())) {
-                    Slog.v(TAG, "uei.getDevPath=" + uei.getDevPath() + " uei=" + uei.toString());
-                    if (state == 1) {
-                        int controller = mDetectedIntf.equals(INTF_DP) ? 0 : 1;
-                        uei.setController(controller);
+                    if (state == 1 && mDpCount > 0) {
+                        uei.setStreamIndex(mDpCount);
                     }
-                    updateLocked(name,
-                                 uei.getDevAddress(),
-                                 uei.computeNewHeadsetState(mHeadsetState, state),
-                                 false /*isSynchronous*/);
+
+                    if (state == 1) {
+                        int newControllerIdx = (mDetectedIntf.equals(INTF_DP)) ? 0 : 1;
+                        uei.setCableIndex(newControllerIdx);
+                    }
+                    updateLocked(
+                            name, uei.getDevAddress(),
+                            uei.computeNewHeadsetState(mHeadsetState, state),
+                            false /*isSynchronous*/);
                     return;
                 }
             }
@@ -652,69 +651,158 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
 
         private final class UEventInfo {
             private final String mDevName;
+            private String mDevAddress;
             private final int mState1Bits;
             private final int mState2Bits;
             private final int mStateNbits;
-
-            private String mDevAddress;
             private int mDevIndex;
             private int mCableIndex;
-            private int mStream;
-            private int mController;
 
-            public UEventInfo(String devName, int state1Bits,
-                              int state2Bits, int stateNbits) {
-
+            public UEventInfo(String devName, int state1Bits, int state2Bits, int stateNbits) {
                 mDevName = devName;
+                mDevAddress = "controller=0;stream=0";
                 mState1Bits = state1Bits;
                 mState2Bits = state2Bits;
                 mStateNbits = stateNbits;
 
-                mDevAddress = "controller=0;stream=0";
                 mDevIndex = -1;
                 mCableIndex = -1;
-                mStream = 0;
-                mController = 0;
+
                 if (mDevName.startsWith(NAME_DP_AUDIO)) {
                     int idx = mDevName.indexOf("/");
                     if (idx != -1) {
-                        int idx2 = mDevName.indexOf("/", idx+1);
+                        int idx2 = mDevName.indexOf("/", idx + 1);
                         assert(idx2 != -1);
-                        int dev = Integer.parseInt(mDevName.substring(idx+1, idx2));
-                        int cable = Integer.parseInt(mDevName.substring(idx2+1));
+                        int dev = Integer.parseInt(mDevName.substring(idx + 1, idx2));
+                        int cable = Integer.parseInt(mDevName.substring(idx2 + 1));
+                        if (LOG) {
+                            Slog.v(TAG, "UEvent dev address " + mDevAddress);
+                        }
                         checkDevIndex(dev);
                         checkCableIndex(cable);
                     }
                 }
             }
 
+            private void checkDevIndex(int devIndex) {
+                int index = 0;
+                char[] buffer = new char[1024];
+
+                while (true) {
+                    String devPath = String.format(Locale.US,
+                            "/sys/devices/platform/soc/%s/extcon/extcon%d/name",
+                            NAME_DP_AUDIO, devIndex);
+                    if (LOG) {
+                        Slog.v(TAG, "checkDevIndex " + devPath);
+                    }
+
+                    File f = new File(devPath);
+                    if (!f.exists()) {
+                        Slog.e(TAG, "file " + devPath + " not found");
+                        break;
+                    }
+
+                    try {
+                        FileReader file = new FileReader(f);
+                        int len = file.read(buffer, 0, 1024);
+                        file.close();
+
+                        String devName = (new String(buffer, 0, len)).trim();
+                        if (devName.startsWith(NAME_DP_AUDIO) && index == devIndex) {
+                            mDevIndex = devIndex;
+                            break;
+                        } else {
+                            index++;
+                        }
+                    } catch (Exception e) {
+                        Slog.e(TAG, "checkDevIndex exception", e);
+                        break;
+                    }
+                }
+            }
+
+            private void checkCableIndex(int cableIndex) {
+                if (mDevIndex == -1) {
+                    return;
+                }
+                int index = 0;
+                char[] buffer = new char[1024];
+
+                while (true) {
+                    String cablePath = String.format(Locale.US,
+                            "/sys/devices/platform/soc/%s/extcon/extcon%d/cable.%d/name",
+                            NAME_DP_AUDIO, mDevIndex, index);
+                    if (LOG) {
+                        Slog.v(TAG, "checkCableIndex " + cablePath);
+                    }
+
+                    File f = new File(cablePath);
+                    if (!f.exists()) {
+                        Slog.e(TAG, "file " + cablePath + " not found");
+                        break;
+                    }
+
+                    try {
+                        FileReader file = new FileReader(f);
+                        int len = file.read(buffer, 0, 1024);
+                        file.close();
+
+                        String cableName = (new String(buffer, 0, len)).trim();
+                        if (cableName.equals("HDMI") && index == cableIndex) {
+                            mCableIndex = index;
+                            break;
+                        } else if (cableName.equals("DP") && index == cableIndex) {
+                            mCableIndex = index;
+                            break;
+                        } else {
+                            index++;
+                        }
+                    } catch (Exception e) {
+                        Slog.e(TAG, "checkCableIndex exception", e);
+                        break;
+                    }
+                }
+            }
+
+            public void setStreamIndex(int streamIndex) {
+                int index1 = mDevAddress.indexOf("=");
+                int index2 = mDevAddress.indexOf("=", index1 + 1);
+
+                String allExceptStreamIdx = mDevAddress.substring(0, index2 + 1);
+                mDevAddress = allExceptStreamIdx + String.valueOf(streamIndex);
+            }
+
+            public void setCableIndex(int cableIndex) {
+                int index = mDevAddress.indexOf("=");
+                String changeControllerIdx = mDevAddress.substring(0, index + 1) + cableIndex
+                        + mDevAddress.substring(index + 2);
+                mDevAddress = changeControllerIdx;
+            }
+
             public String getDevName() {
                 return mDevName;
+            }
+
+            public String getDevAddress() {
+                return mDevAddress;
             }
 
             public String getDevPath() {
                 if (mDevName.startsWith(NAME_DP_AUDIO)) {
                     return String.format(Locale.US,
-                                         "/devices/platform/soc/%s/extcon/extcon%d",
-                                         NAME_DP_AUDIO,
-                                         mDevIndex);
-                } else {
-                    return String.format(Locale.US,
-                                     "/devices/virtual/switch/%s",
-                                     mDevName);
+                            "/devices/platform/soc/%s/extcon/extcon%d",
+                            NAME_DP_AUDIO, mDevIndex);
                 }
+                return String.format(Locale.US, "/devices/virtual/switch/%s", mDevName);
             }
 
             public String getSwitchStatePath() {
                 if (mDevName.startsWith(NAME_DP_AUDIO)) {
                     return String.format(Locale.US,
-                           "/sys/devices/platform/soc/%s/extcon/extcon%d/cable.%d/state",
-                           NAME_DP_AUDIO, mDevIndex, mCableIndex);
-                } else {
-                    return String.format(Locale.US,
-                                    "/sys/class/switch/%s/state",
-                                    mDevName);
+                            "/sys/devices/platform/soc/%s/extcon/extcon%d/cable.%d/state",
+                            NAME_DP_AUDIO, mDevIndex, mCableIndex);
                 }
+                return String.format(Locale.US, "/sys/class/switch/%s/state", mDevName);
             }
 
             public boolean checkSwitchExists() {
@@ -730,95 +818,12 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
 
                 return ((headsetState & preserveMask) | setBits);
             }
-
-
-    public String getDevAddress() { return mDevAddress; }
-
-    private void checkDevIndex(int index) {
-        char[] buffer = new char[1024];
-        String devPath = String.format(Locale.US,
-            "/sys/devices/platform/soc/%s/extcon/extcon%d/name",
-            NAME_DP_AUDIO, index);
-
-
-        File f = new File(devPath);
-        if (!f.exists()) {
-            Slog.e(TAG, "file " + devPath + " not found");
-            return;
-        }
-
-        try (FileReader file = new FileReader(f)) {
-            int len = file.read(buffer, 0, 1024);
-            String devName = (new String(buffer, 0, len)).trim();
-
-            if (devName.startsWith(NAME_DP_AUDIO)) {
-                Slog.e(TAG, "set mDevIndex " + index + " devPath " + devPath);
-                mDevIndex = index;
-            }
-        } catch (Exception e) {
-            Slog.e(TAG, "checkDevIndex exception ", e);
-        }
-    }
-
-    private void checkCableIndex(int cable_index) {
-        if (mDevIndex == -1) {
-            return;
-        }
-
-        char[] buffer = new char[1024];
-        String cablePath = String.format(Locale.US,
-            "/sys/devices/platform/soc/%s/extcon/extcon%d/cable.%d/name",
-            NAME_DP_AUDIO, mDevIndex, cable_index);
-
-        if (LOG) {
-            Slog.v(TAG, "checkCableIndex " + cablePath);
-        }
-
-        File f = new File(cablePath);
-        if (!f.exists()) {
-            Slog.e(TAG, "file " + cablePath + " not found");
-            return;
-        }
-
-        try (FileReader file = new FileReader(f)) {
-            int len = file.read(buffer, 0, 1024);
-            String cableName = (new String(buffer, 0, len)).trim();
-
-            if ("HDMI".equals(cableName) || "DP".equals(cableName)) {
-                mCableIndex = cable_index;
-                Slog.i(TAG, "checkCableIndex set cable for " + cableName + " " + cable_index +
-                            " cable " + cablePath);
-            } else {
-                Slog.i(TAG, "checkCableIndex no name match, skip for cable " + cablePath);
-            }
-        } catch (Exception e) {
-            Slog.e(TAG, "checkCableIndex exception", e);
-        }
-    }
-
-
-    public void setStreamIndex(int streamIndex) {
-        mStream = streamIndex;
-        mDevAddress = String.format("controller=%d;stream=%d", mController, mStream);
-    }
-
-
-    public void setController(int controller) {
-        mController = controller;
-        mDevAddress = String.format("controller=%d;stream=%d", mController, mStream);
-    }
-
-    public String toString() {
-        return "UEventInfo " +
-                " name=" + mDevName +
-                " mDevAddress=" + mDevAddress;
-        }
-
         }
     }
 
     private class WiredAccessoryExtconObserver extends ExtconStateObserver<Pair<Integer, Integer>> {
         private final List<ExtconInfo> mExtconInfos;
+        private final HashMap<String, Pair<Integer, Integer>> mExtconStates = new HashMap<>();
 
         WiredAccessoryExtconObserver() {
             mExtconInfos = ExtconInfo.getExtconInfoForTypes(new String[] {
@@ -883,11 +888,16 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
         public void updateState(ExtconInfo extconInfo, String name,
                 Pair<Integer, Integer> maskAndState) {
             synchronized (mLock) {
-                int mask = maskAndState.first;
-                int state = maskAndState.second;
+                // Several extcons can report the same cable type (one per HDMI port)
+                mExtconStates.put(extconInfo.getName(), maskAndState);
+                int mask = 0;
+                int state = 0;
+                for (Pair<Integer, Integer> s : mExtconStates.values()) {
+                    mask |= s.first;
+                    state |= s.first & s.second;
+                }
                 updateLocked(
-                        name,
-                        "",
+                        name, "",
                         mHeadsetState & ~(mask & ~state) | (mask & state),
                         false /*isSynchronous*/);
                 return;

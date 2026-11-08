@@ -17,6 +17,7 @@
 package com.android.systemui.statusbar.pipeline.mobile.domain.interactor
 
 import com.android.systemui.kairos.BuildScope
+import com.android.systemui.kairos.toColdConflatedFlow
 import com.android.systemui.kairos.util.nameTag
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.statusbar.pipeline.mobile.data.model.MobileIconCustomizationMode
@@ -24,6 +25,7 @@ import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameMode
 import com.android.systemui.statusbar.pipeline.mobile.domain.model.NetworkTypeIconModel
 import com.android.systemui.statusbar.pipeline.mobile.domain.model.SignalIconModel
 import com.android.systemui.statusbar.pipeline.shared.data.model.DataActivityModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -131,6 +133,35 @@ fun BuildScope.MobileIconInteractorKairosAdapter(
                             "MobileIconInteractorKairosAdapter(subId=$subscriptionId).isForceHidden"
                         }
                 ),
+            isRoamingForceHidden =
+                isRoamingForceHidden.toColdConflatedFlow(
+                    kairosNetwork,
+                    nameTag {
+                        "MobileIconInteractorKairosAdapter(subId=$subscriptionId).isRoamingForceHidden"
+                    },
+                ),
+            isMobileHd = isMobileHd.toStateFlow(
+                nameTag {
+                    "MobileIconInteractorKairosAdapter(subId=$subscriptionId).isMobileHd"
+                }
+            ),
+            isMobileHdForceHidden = isMobileHdForceHidden.toColdConflatedFlow(
+                kairosNetwork,
+                nameTag {
+                    "MobileIconInteractorKairosAdapter(subId=$subscriptionId).isMobileHdForceHidden"
+                }
+            ),
+            isVoWifi = isVoWifi.toStateFlow(
+                nameTag {
+                    "MobileIconInteractorKairosAdapter(subId=$subscriptionId).isVoWifi"
+                }
+            ),
+            isVoWifiForceHidden = isVoWifiForceHidden.toColdConflatedFlow(
+                kairosNetwork,
+                nameTag {
+                    "MobileIconInteractorKairosAdapter(subId=$subscriptionId).isVoWifiForceHidden"
+                }
+            ),
             isAllowedDuringAirplaneMode =
                 isAllowedDuringAirplaneMode.toStateFlow(
                     nameTag {
@@ -141,6 +172,12 @@ fun BuildScope.MobileIconInteractorKairosAdapter(
                 carrierNetworkChangeActive.toStateFlow(
                     nameTag {
                         "MobileIconInteractorKairosAdapter(subId=$subscriptionId).carrierNetworkChangeActive"
+                    }
+                ),
+            shouldShowFourgIcon =
+                shouldShowFourgIcon.toStateFlow(
+                    nameTag {
+                        "MobileIconInteractorKairosAdapter(subId=$subscriptionId).shouldShowFourgIcon"
                     }
                 ),
         )
@@ -165,8 +202,14 @@ private class MobileIconInteractorKairosAdapter(
     override val isSingleCarrier: StateFlow<Boolean>,
     override val isRoaming: StateFlow<Boolean>,
     override val isForceHidden: StateFlow<Boolean>,
+    override val isRoamingForceHidden: Flow<Boolean>,
+    override val isMobileHd: StateFlow<Boolean>,
+    override val isMobileHdForceHidden: Flow<Boolean>,
+    override val isVoWifi: StateFlow<Boolean>,
+    override val isVoWifiForceHidden: Flow<Boolean>,
     override val isAllowedDuringAirplaneMode: StateFlow<Boolean>,
     override val carrierNetworkChangeActive: StateFlow<Boolean>,
+    override val shouldShowFourgIcon: StateFlow<Boolean>,
 ) : MobileIconInteractor {
     override val isConnectionFailed = MutableStateFlow(false)
     override val customizedNetworkName = MutableStateFlow(NetworkNameModel.IntentDerived("demo mode"))

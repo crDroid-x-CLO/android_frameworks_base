@@ -59,6 +59,7 @@
         <item><xliff:g id="id">@string/status_bar_ethernet</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_oem_satellite</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_hotspot</xliff:g></item>
+        <item><xliff:g id="id">@string/status_bar_network_traffic</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_stacked_mobile</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_mobile</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_wifi</xliff:g></item>
@@ -106,6 +107,7 @@
     <string translatable="false" name="status_bar_sensors_off">sensors_off</string>
     <string translatable="false" name="status_bar_screen_record">screen_record</string>
     <string translatable="false" name="status_bar_oem_satellite">satellite</string>
+    <string translatable="false" name="status_bar_network_traffic">network_traffic</string>
 
     <!-- Flag indicating whether the surface flinger has limited
          alpha compositing functionality in hardware.  If set, the window
@@ -944,11 +946,11 @@
     <integer name="config_defaultNightDisplayCustomEndTime">21600000</integer>
 
     <!-- Minimum color temperature, in Kelvin, supported by Night display. -->
-    <integer name="config_nightDisplayColorTemperatureMin">2596</integer>
+    <integer name="config_nightDisplayColorTemperatureMin">1600</integer>
 
     <!-- Default color temperature, in Kelvin, to tint the screen when Night display is
          activated. -->
-    <integer name="config_nightDisplayColorTemperatureDefault">2850</integer>
+    <integer name="config_nightDisplayColorTemperatureDefault">2650</integer>
 
     <!-- Maximum color temperature, in Kelvin, supported by Night display. -->
     <integer name="config_nightDisplayColorTemperatureMax">4082</integer>
@@ -1471,7 +1473,10 @@
     <integer name="config_notificationsBatteryMediumARGB">0xFFFFFF00</integer>
 
     <!-- Default value for led color when battery is fully or nearly fully charged -->
-    <integer name="config_notificationsBatteryFullARGB">0xFF00FF00</integer>
+    <integer name="config_notificationsBatteryFullARGB">0xFF0000FF</integer>
+
+    <!-- Default value for led color when battery is really fully charged -->
+    <integer name="config_notificationsBatteryReallyFullARGB">0xFF00FF00</integer>
 
     <!-- Default value for LED on time when the battery is low on charge in miliseconds -->
     <integer name="config_notificationsBatteryLedOn">125</integer>
@@ -5547,6 +5552,8 @@
     <!-- URI for camera shutter sound -->
     <string translatable="false" name="config_cameraShutterSound">/product/media/audio/ui/camera_click.ogg</string>
 
+    <string translatable="false" name="config_screenshotSound">/product/media/audio/ui/screenshot.ogg</string>
+
     <!-- @deprecated This configuration is no longer used. -->
     <string translatable="false" name="config_defaultRingtoneVibrationSound"></string>
 
@@ -5563,7 +5570,7 @@
     <integer translatable="false" name="config_storageManagerDaystoRetainDefault">90</integer>
 
     <!-- Name of a font family to use for headlines. If empty, falls back to platform default -->
-    <string name="config_headlineFontFamily" translatable="false"></string>
+    <string name="config_headlineFontFamily" translatable="false">sans-serif</string>
     <!-- Allows setting custom fontFeatureSettings on specific text. -->
     <string name="config_headlineFontFeatureSettings" translatable="false"></string>
 
@@ -5648,7 +5655,7 @@
     <!-- Controls whether system buttons use all caps for text -->
     <bool name="config_buttonTextAllCaps">true</bool>
     <!-- Name of the font family used for system surfaces where the font should use medium weight -->
-    <string name="config_headlineFontFamilyMedium" translateable="false">@string/font_family_button_material</string>
+    <string name="config_headlineFontFamilyMedium" translateable="false">sans-serif-medium</string>
     <!-- Name of a font family to use for body text. -->
     <string name="config_bodyFontFamily" translatable="false">sans-serif</string>
     <!-- Name of a font family to use for medium body text. -->
