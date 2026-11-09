@@ -25,7 +25,6 @@ package com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel
 import android.telephony.TelephonyManager
 import com.android.settingslib.mobile.TelephonyIcons
 import com.android.settingslib.R as settingsLibR
-import com.android.settingslib.mobile.TelephonyIcons
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.log.table.logDiffsForTable
@@ -53,6 +52,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+
 /** Common interface for all of the location-based mobile icon view models. */
 interface MobileIconViewModelCommon {
     val subscriptionId: Int
@@ -314,11 +314,15 @@ private class CellularIconViewModel(
                 iconInteractor.networkTypeIconGroup,
                 showNetworkTypeIcon,
                 iconInteractor.networkTypeIconCustomization,
-                iconInteractor.voWifiAvailable,
-                iconInteractor.isInService,
-                iconInteractor.shouldShowFourgIcon,
-            ) { networkTypeIconGroup, shouldShow, networkTypeIconCustomization, voWifiAvailable,
-                isInService, shouldShowFourgIcon ->
+                combine(
+                    iconInteractor.voWifiAvailable,
+                    iconInteractor.isInService,
+                    iconInteractor.shouldShowFourgIcon,
+                ) { voWifiAvailable, isInService, shouldShowFourgIcon ->
+                    Triple(voWifiAvailable, isInService, shouldShowFourgIcon)
+                },
+            ) { networkTypeIconGroup, shouldShow, networkTypeIconCustomization,
+                (voWifiAvailable, isInService, shouldShowFourgIcon) ->
                 val desc =
                     if (networkTypeIconGroup.contentDescription != 0) {
                         var contDesc: Int = networkTypeIconGroup.contentDescription
@@ -349,8 +353,6 @@ private class CellularIconViewModel(
                         }
                     }
                     !shouldShow -> null
-                    shouldShowFourgIcon ||
-                    !shouldShowFourgIcon -> icon
                     else -> icon
                 }
             }

@@ -173,7 +173,7 @@ fun CustomStackedMobileIcon(viewModel: StackedMobileIconViewModel, modifier: Mod
             )
         }
 
-        if (viewModel.roaming) {
+        if (viewModel.isRoamingVisible) {
             val height = with(LocalDensity.current) { RoamingIconHeightSp.toDp() }
             val paddingTop = with(LocalDensity.current) { RoamingIconPaddingTopSp.toDp() }
             Image(

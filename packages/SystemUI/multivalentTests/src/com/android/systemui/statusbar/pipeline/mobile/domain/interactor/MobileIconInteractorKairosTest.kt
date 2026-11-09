@@ -99,6 +99,12 @@ class MobileIconInteractorKairosTest : SysuiTestCase() {
 
     private val Kosmos.isForceHidden by Fixture { MutableState(false) }
 
+    private val Kosmos.isRoamingForceHidden by Fixture { MutableState(false) }
+
+    private val Kosmos.isMobileHdForceHidden by Fixture { MutableState(false) }
+
+    private val Kosmos.isVoWifiForceHidden by Fixture { MutableState(false) }
+
     private val Kosmos.underTest by ActivatedKairosFixture {
         MobileIconInteractorKairosImpl(
             defaultSubscriptionHasDataEnabled,
@@ -110,6 +116,9 @@ class MobileIconInteractorKairosTest : SysuiTestCase() {
             defaultMobileIconGroup,
             isDefaultConnectionFailed,
             isForceHidden,
+            isRoamingForceHidden,
+            isMobileHdForceHidden,
+            isVoWifiForceHidden,
             connectionRepository = connectionRepo,
             context = context,
             carrierIdOverrides = overrides,

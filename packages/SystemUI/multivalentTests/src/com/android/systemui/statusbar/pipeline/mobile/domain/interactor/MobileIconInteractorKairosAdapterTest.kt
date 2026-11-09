@@ -68,6 +68,9 @@ class MobileIconInteractorKairosAdapterTest : MobileIconInteractorTestBase() {
                                         isDefaultConnectionFailed =
                                             wrapped.isDefaultConnectionFailed,
                                         isForceHidden = wrapped.isForceHidden,
+                                        isRoamingForceHidden = wrapped.isRoamingForceHidden,
+                                        isMobileHdForceHidden = wrapped.isMobileHdForceHidden,
+                                        isVoWifiForceHidden = wrapped.isVoWifiForceHidden,
                                         connectionRepository = wrapRepo(connectionRepository),
                                         context = context,
                                         carrierIdOverrides = overrides,
@@ -115,6 +118,9 @@ class MobileIconInteractorKairosAdapterTest : MobileIconInteractorTestBase() {
             isDefaultConnectionFailed = interactor.isDefaultConnectionFailed.toState(),
             isUserSetUp = interactor.isUserSetUp.toState(),
             isForceHidden = interactor.isForceHidden.toState(false),
+            isRoamingForceHidden = interactor.isRoamingForceHidden.toState(false),
+            isMobileHdForceHidden = interactor.isMobileHdForceHidden.toState(false),
+            isVoWifiForceHidden = interactor.isVoWifiForceHidden.toState(false),
             isDeviceInEmergencyCallsOnlyMode =
                 interactor.isDeviceInEmergencyCallsOnlyMode.toState(false),
         )
@@ -140,6 +146,9 @@ class MobileIconInteractorKairosAdapterTest : MobileIconInteractorTestBase() {
         override val isDefaultConnectionFailed: State<Boolean>,
         override val isUserSetUp: State<Boolean>,
         override val isForceHidden: State<Boolean>,
+        override val isRoamingForceHidden: State<Boolean>,
+        override val isMobileHdForceHidden: State<Boolean>,
+        override val isVoWifiForceHidden: State<Boolean>,
         override val isDeviceInEmergencyCallsOnlyMode: State<Boolean>,
     ) : MobileIconsInteractorKairos
 }

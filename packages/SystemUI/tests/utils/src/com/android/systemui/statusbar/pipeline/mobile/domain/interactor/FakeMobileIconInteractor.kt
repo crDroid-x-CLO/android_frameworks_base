@@ -69,6 +69,18 @@ class FakeMobileIconInteractor(override val tableLogBuffer: TableLogBuffer) : Mo
 
     override val isAllowedDuringAirplaneMode = MutableStateFlow(false)
 
+    override val isRoamingForceHidden = MutableStateFlow(false)
+
+    override val isMobileHdForceHidden = MutableStateFlow(false)
+
+    override val isVoWifiForceHidden = MutableStateFlow(false)
+
+    override val isMobileHd = MutableStateFlow(false)
+
+    override val isVoWifi = MutableStateFlow(false)
+
+    override val shouldShowFourgIcon = MutableStateFlow(false)
+
     override val signalLevelIcon: MutableStateFlow<SignalIconModel> =
         MutableStateFlow(
             SignalIconModel.CellularTypeIconModel.Cellular(
