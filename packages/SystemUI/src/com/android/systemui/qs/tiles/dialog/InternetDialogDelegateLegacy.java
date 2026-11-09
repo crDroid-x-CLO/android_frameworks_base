@@ -79,6 +79,7 @@ import android.widget.CompoundButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import androidx.annotation.MainThread;
@@ -197,7 +198,7 @@ public class InternetDialogDelegateLegacy implements
     private TextView mMobileTitleText;
     private TextView mMobileSummaryText;
     private TextView mAirplaneModeSummaryText;
-    private Switch mMobileDataToggle;
+    private CompoundButton mMobileDataToggle;
     private Switch mSecondaryMobileDataToggle;
     private View mMobileToggleDivider;
     private View mMobileConnectedSpace;
@@ -1370,7 +1371,7 @@ public class InternetDialogDelegateLegacy implements
                     context.getString(R.string.data_disable_ciwlan_call_might_drop_message);
         }
 
-        final Switch mobileDataToggle = (subId == mDefaultDataSubId)
+        final CompoundButton mobileDataToggle = (subId == mDefaultDataSubId)
                 ? mMobileDataToggle : mSecondaryMobileDataToggle;
         mAlertDialog = new AlertDialog.Builder(context)
                 .setTitle(R.string.mobile_data_disable_title)

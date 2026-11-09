@@ -91,6 +91,8 @@ import com.android.systemui.kosmos.KosmosJavaAdapter;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.connectivity.AccessPointController;
+import com.android.systemui.statusbar.policy.DataSaverController;
+import com.android.systemui.statusbar.policy.HotspotController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.LocationController;
 import com.android.systemui.toast.SystemUIToast;
@@ -275,6 +277,7 @@ public class InternetDetailsContentControllerTest extends SysuiTestCase {
                 mock(KeyguardUpdateMonitor.class), mGlobalSettings, mKeyguardStateController,
                 mWindowManager, mToastFactory, mWorkerHandler, mCarrierConfigTracker,
                 mLocationController, mDialogTransitionAnimator, mWifiStateWorker, mFlags,
+                mock(HotspotController.class), mock(DataSaverController.class),
                 mKosmos.getShadeDialogContextInteractor(), mUserRepository, mCarrierNameCustomization);
         mSubscriptionManager.addOnSubscriptionsChangedListener(mExecutor,
                 mInternetDetailsContentController.mOnSubscriptionsChangedListener);
