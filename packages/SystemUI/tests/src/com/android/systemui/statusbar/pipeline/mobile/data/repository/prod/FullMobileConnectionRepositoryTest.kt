@@ -31,6 +31,9 @@ import com.android.systemui.flags.FakeFeatureFlagsClassic
 import com.android.systemui.flags.Flags.ROAMING_INDICATOR_VIA_DISPLAY_INFO
 import com.android.systemui.log.table.logcatTableLogBuffer
 import com.android.systemui.log.table.tableLogBufferFactory
+import com.android.systemui.statusbar.pipeline.ims.data.model.ImsStateModel
+import com.android.systemui.statusbar.pipeline.ims.data.repository.ImsRepository
+import com.android.systemui.statusbar.pipeline.ims.data.repository.ImsRepositoryImpl
 import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SystemUiCarrierConfig
@@ -49,6 +52,7 @@ import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.mockito.mock
+import com.android.systemui.util.mockito.nullable
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
 import java.io.PrintWriter
@@ -86,6 +90,11 @@ class FullMobileConnectionRepositoryTest : SysuiTestCase() {
     private val tableLogBuffer = logcatTableLogBuffer(kosmos, "TestName")
     private val mobileFactory = mock<MobileConnectionRepositoryImpl.Factory>()
     private val carrierMergedFactory = mock<CarrierMergedConnectionRepository.Factory>()
+    private val imsRepoFactory = mock<ImsRepositoryImpl.Factory>()
+    private val imsRepo =
+        mock<ImsRepository>().also {
+            whenever(it.imsState).thenReturn(MutableStateFlow(ImsStateModel()))
+        }
     private val connectivityManager = mock<ConnectivityManager>()
 
     private val subscriptionModel =
@@ -112,7 +121,18 @@ class FullMobileConnectionRepositoryTest : SysuiTestCase() {
                 this.isAllowedDuringAirplaneMode.value = true
             }
 
-        whenever(mobileFactory.build(eq(SUB_ID), any(), any(), eq(DEFAULT_NAME_MODEL), eq(SEP)))
+        whenever(imsRepoFactory.build(SUB_ID)).thenReturn(imsRepo)
+        whenever(
+                mobileFactory.build(
+                    eq(SUB_ID),
+                    any(),
+                    any(),
+                    eq(DEFAULT_NAME_MODEL),
+                    eq(SEP),
+                    any(),
+                    nullable(),
+                )
+            )
             .thenReturn(mobileRepo)
         whenever(carrierMergedFactory.build(eq(SUB_ID), any())).thenReturn(carrierMergedRepo)
     }
@@ -340,6 +360,7 @@ class FullMobileConnectionRepositoryTest : SysuiTestCase() {
                     kosmos.tableLogBufferFactory,
                     mobileFactory,
                     carrierMergedFactory,
+                    imsRepoFactory,
                 )
 
             // Create two connections for the same subId. Similar to if the connection appeared
@@ -375,6 +396,7 @@ class FullMobileConnectionRepositoryTest : SysuiTestCase() {
                     kosmos.tableLogBufferFactory,
                     mobileFactory,
                     carrierMergedFactory,
+                    imsRepoFactory,
                 )
 
             val connection1 =
@@ -585,6 +607,7 @@ class FullMobileConnectionRepositoryTest : SysuiTestCase() {
                 testScope.backgroundScope,
                 mobileFactory,
                 carrierMergedFactory,
+                imsRepoFactory,
             )
     }
 
@@ -612,8 +635,19 @@ class FullMobileConnectionRepositoryTest : SysuiTestCase() {
 // QTI_BEGIN: 2023-03-02: Data: SystemUI: Support side car 5G icon
                 FiveGServiceClient(mContext),
 // QTI_END: 2023-03-02: Data: SystemUI: Support side car 5G icon
+                imsRepo,
             )
-        whenever(mobileFactory.build(eq(SUB_ID), any(), any(), eq(DEFAULT_NAME_MODEL), eq(SEP)))
+        whenever(
+                mobileFactory.build(
+                    eq(SUB_ID),
+                    any(),
+                    any(),
+                    eq(DEFAULT_NAME_MODEL),
+                    eq(SEP),
+                    any(),
+                    nullable(),
+                )
+            )
             .thenReturn(realRepo)
 
         return realRepo

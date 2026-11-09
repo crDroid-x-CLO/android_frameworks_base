@@ -35,6 +35,8 @@ import com.android.systemui.SysuiTestCase
 import com.android.systemui.flags.FakeFeatureFlagsClassic
 import com.android.systemui.flags.Flags
 import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.statusbar.pipeline.ims.data.model.ImsStateModel
+import com.android.systemui.statusbar.pipeline.ims.data.repository.ImsRepository
 import com.android.systemui.statusbar.pipeline.mobile.data.MobileInputLogger
 import com.android.systemui.statusbar.pipeline.mobile.data.model.DataConnectionState
 import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameModel
@@ -52,6 +54,7 @@ import com.android.systemui.statusbar.policy.FiveGServiceClient.FiveGServiceStat
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -114,6 +117,7 @@ class MobileConnectionTelephonySmokeTests : MobileConnectionTelephonySmokeTestsB
             flags,
             testScope.backgroundScope,
             fiveGServiceClient,
+            imsRepo,
         )
 }
 
@@ -132,6 +136,10 @@ abstract class MobileConnectionTelephonySmokeTestsBase : SysuiTestCase() {
     protected val mobileMappings = FakeMobileMappingsProxy()
     protected val systemUiCarrierConfig = SystemUiCarrierConfig(SUB_1_ID, testCarrierConfig())
     protected val fiveGServiceClient = FiveGServiceClient(mContext)
+    protected val imsRepo =
+        mock<ImsRepository>().also {
+            whenever(it.imsState).thenReturn(MutableStateFlow(ImsStateModel()))
+        }
 
     protected val testDispatcher = UnconfinedTestDispatcher()
     protected val testScope = TestScope(testDispatcher)

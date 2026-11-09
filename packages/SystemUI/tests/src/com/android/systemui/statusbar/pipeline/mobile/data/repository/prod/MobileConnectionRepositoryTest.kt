@@ -79,6 +79,8 @@ import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.flags.FakeFeatureFlagsClassic
 import com.android.systemui.flags.Flags.ROAMING_INDICATOR_VIA_DISPLAY_INFO
 import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.statusbar.pipeline.ims.data.model.ImsStateModel
+import com.android.systemui.statusbar.pipeline.ims.data.repository.ImsRepository
 import com.android.systemui.statusbar.pipeline.mobile.data.MobileInputLogger
 import com.android.systemui.statusbar.pipeline.mobile.data.model.DataConnectionState
 import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameModel
@@ -148,6 +150,7 @@ class MobileConnectionRepositoryImplTest : MobileConnectionRepositoryTest() {
             flags,
             testScope.backgroundScope,
 	    fiveGServiceClient,
+            imsRepo,
         )
 }
 
@@ -169,6 +172,10 @@ abstract class MobileConnectionRepositoryTest : SysuiTestCase() {
     protected val mobileMappings = FakeMobileMappingsProxy()
     protected val systemUiCarrierConfig = SystemUiCarrierConfig(SUB_1_ID, testCarrierConfig())
     protected val fiveGServiceClient = FiveGServiceClient(mContext)
+    protected val imsRepo =
+        mock<ImsRepository>().also {
+            whenever(it.imsState).thenReturn(MutableStateFlow(ImsStateModel()))
+        }
 
     protected val testDispatcher = UnconfinedTestDispatcher()
     protected val testScope = TestScope(testDispatcher)

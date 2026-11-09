@@ -19,6 +19,7 @@ package com.android.systemui.statusbar.pipeline.mobile.data.repository
 import com.android.systemui.kairos.MutableState
 import com.android.systemui.kairos.State
 import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.statusbar.pipeline.ims.data.model.ImsStateModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.DataConnectionState
 import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.ResolvedNetworkType
@@ -62,6 +63,7 @@ class FakeMobileConnectionRepositoryKairos(
         MutableState<NetworkNameModel>(NetworkNameModel.Default(DEFAULT_NETWORK_NAME))
     override val isAllowedDuringAirplaneMode = MutableState(false)
     override val hasPrioritizedNetworkCapabilities = MutableState(false)
+    override val imsState = MutableState(ImsStateModel())
     override val isInEcmMode: State<Boolean> = MutableState(false)
     override val volteId = MutableState(0)
     override val showSignalStrengthIcon = MutableState(true)

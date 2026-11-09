@@ -29,6 +29,7 @@ import android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_NONE
 // QTI_END: 2023-04-01: Data: SystemUI: Readapt VoWifi icon
 import android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID
 import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.statusbar.pipeline.ims.data.model.ImsStateModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.DataConnectionState
 import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.ResolvedNetworkType
@@ -103,6 +104,7 @@ class FakeMobileConnectionRepository(
 // QTI_END: 2024-05-21: Data: SystemUI: Add 6Rx icons support for NrIcons
 
     override val hasPrioritizedNetworkCapabilities = MutableStateFlow(false)
+    override val imsState = MutableStateFlow(ImsStateModel())
 
     private var isInEcmMode: Boolean = false
 
