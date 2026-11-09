@@ -39,6 +39,7 @@ import com.android.systemui.biometrics.ui.view.UdfpsTouchOverlay
 import com.android.systemui.biometrics.ui.viewmodel.DefaultUdfpsTouchOverlayViewModel
 import com.android.systemui.biometrics.ui.viewmodel.DeviceEntryUdfpsTouchOverlayViewModel
 import com.android.systemui.biometrics.ui.viewmodel.PromptUdfpsTouchOverlayViewModel
+import com.android.systemui.brightness.domain.interactor.brightnessMirrorShowingInteractor
 import com.android.systemui.flags.DisableSceneContainer
 import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
@@ -153,6 +154,7 @@ class UdfpsControllerOverlayTest : SysuiTestCase() {
                 shadeInteractor,
                 udfpsOverlayInteractor,
                 powerInteractor,
+                kosmos.brightnessMirrorShowingInteractor,
                 testScope,
                 { sceneInteractor },
             )
