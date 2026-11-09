@@ -40,8 +40,6 @@ import com.android.systemui.display.domain.interactor.ConnectedDisplayInteractor
 import com.android.systemui.display.domain.interactor.ConnectedDisplayInteractor.PendingDisplay
 import com.android.systemui.display.domain.interactor.ConnectedDisplayInteractor.State
 import com.android.systemui.kosmos.testScope
-import com.android.systemui.privacy.PrivacyItemController
-import com.android.systemui.privacy.logging.PrivacyLogger
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.CommandQueue
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController
@@ -51,7 +49,6 @@ import com.android.systemui.statusbar.policy.DeviceProvisionedController
 import com.android.systemui.statusbar.policy.FiveGServiceClient
 import com.android.systemui.statusbar.policy.HotspotController
 import com.android.systemui.statusbar.policy.KeyguardStateController
-import com.android.systemui.statusbar.policy.LocationController
 import com.android.systemui.statusbar.policy.NextAlarmController
 import com.android.systemui.statusbar.policy.RotationLockController
 import com.android.systemui.statusbar.policy.SensorPrivacyController
@@ -60,6 +57,7 @@ import com.android.systemui.statusbar.policy.ZenModeController
 import com.android.systemui.statusbar.policy.data.repository.fakeZenModeRepository
 import com.android.systemui.statusbar.policy.domain.interactor.zenModeInteractor
 import com.android.systemui.testKosmos
+import com.android.systemui.tuner.TunerService
 import com.android.systemui.util.RingerModeTracker
 import com.android.systemui.util.concurrency.FakeExecutor
 import com.android.systemui.util.kotlin.javaAdapter
@@ -116,7 +114,6 @@ class PhoneStatusBarPolicyTest : SysuiTestCase() {
     @Mock private lateinit var dataSaverController: DataSaverController
     @Mock private lateinit var deviceProvisionedController: DeviceProvisionedController
     @Mock private lateinit var keyguardStateController: KeyguardStateController
-    @Mock private lateinit var locationController: LocationController
     @Mock private lateinit var sensorPrivacyController: SensorPrivacyController
     @Mock private lateinit var alarmManager: AlarmManager
     @Mock private lateinit var userManager: UserManager
@@ -128,8 +125,7 @@ class PhoneStatusBarPolicyTest : SysuiTestCase() {
     @Mock private lateinit var dateFormatUtil: DateFormatUtil
     @Mock(answer = Answers.RETURNS_DEEP_STUBS)
     private lateinit var ringerModeTracker: RingerModeTracker
-    @Mock private lateinit var privacyItemController: PrivacyItemController
-    @Mock private lateinit var privacyLogger: PrivacyLogger
+    @Mock private lateinit var tunerService: TunerService
     @Mock private lateinit var fiveGServiceClient: FiveGServiceClient
     @Captor
     private lateinit var alarmCallbackCaptor:
@@ -385,7 +381,6 @@ class PhoneStatusBarPolicyTest : SysuiTestCase() {
             zenModeController,
             deviceProvisionedController,
             keyguardStateController,
-            locationController,
             sensorPrivacyController,
             alarmManager,
             userManager,
@@ -396,12 +391,11 @@ class PhoneStatusBarPolicyTest : SysuiTestCase() {
             sharedPreferences,
             dateFormatUtil,
             ringerModeTracker,
-            privacyItemController,
-            privacyLogger,
             fakeConnectedDisplayStateProvider,
             kosmos.zenModeInteractor,
             kosmos.javaAdapter,
             fiveGServiceClient,
+            tunerService,
         )
     }
 
