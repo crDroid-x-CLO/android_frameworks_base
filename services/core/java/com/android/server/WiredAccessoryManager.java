@@ -77,12 +77,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
     private static final String NAME_USB_AUDIO = "usb_audio";
     private static final String NAME_HDMI_AUDIO = "hdmi_audio";
     private static final String NAME_DP_AUDIO = "soc:qcom,msm-ext-disp";
-    // within a device, a single stream supports DP
     private static final String[] DP_AUDIO_CONNS = {
-            NAME_DP_AUDIO + "/3/1",
-            NAME_DP_AUDIO + "/2/1",
-            NAME_DP_AUDIO + "/1/1",
-            NAME_DP_AUDIO + "/0/1",
             NAME_DP_AUDIO + "/3/0",
             NAME_DP_AUDIO + "/2/0",
             NAME_DP_AUDIO + "/1/0",
@@ -90,6 +85,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
     };
 
     private static final String NAME_HDMI = "hdmi";
+    private static final int MAX_DP_COUNT = 2;
     private static final String INTF_DP = "DP";
     private static final String INTF_HDMI = "HDMI";
     private static final int MSG_NEW_DEVICE_STATE = 1;
@@ -315,7 +311,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
         }
 
         if (isSynchronous) {
-            setDevicesState(headsetState, mHeadsetState, "");
+            setDevicesState(headsetState, mHeadsetState, newName + "/" + address);
         } else {
             mWakeLock.acquire();
             Log.i(TAG, "MSG_NEW_DEVICE_STATE");
@@ -330,7 +326,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                 msg = mHandler.obtainMessage(MSG_NEW_DEVICE_STATE, headsetState,
                         pseudoHeadsetState, NAME_DP_AUDIO + "/" + address);
 
-                if ((headsetState == 0) && (mDpCount != 0)) {
+                if (mDpCount != 0) {
                     // Atleast one DP is connected, so keep mHeadsetState's DP bit set.
                     headsetState = headsetState | BIT_HDMI_AUDIO;
                 }
@@ -537,6 +533,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                 }
             }
 
+            int streamIndex = MAX_DP_COUNT - 1;
             for (String conn : DP_AUDIO_CONNS) {
                 // Monitor DisplayPort
                 if (LOG) {
@@ -544,6 +541,8 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
                 }
                 uei = new UEventInfo(conn, BIT_HDMI_AUDIO, 0, 0);
                 if (uei.checkSwitchExists()) {
+                    uei.setStreamIndex(streamIndex);
+                    streamIndex--;
                     retVal.add(uei);
                 } else {
                     Slog.w(TAG, "Conn " + conn + " does not have DP audio support");
@@ -632,10 +631,6 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             for (int i = 0; i < mUEventInfo.size(); ++i) {
                 UEventInfo uei = mUEventInfo.get(i);
                 if (devPath.equals(uei.getDevPath())) {
-                    if (state == 1 && mDpCount > 0) {
-                        uei.setStreamIndex(mDpCount);
-                    }
-
                     if (state == 1) {
                         int newControllerIdx = (mDetectedIntf.equals(INTF_DP)) ? 0 : 1;
                         uei.setCableIndex(newControllerIdx);
@@ -685,39 +680,31 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             }
 
             private void checkDevIndex(int devIndex) {
-                int index = 0;
                 char[] buffer = new char[1024];
+                String devPath = String.format(Locale.US,
+                        "/sys/devices/platform/soc/%s/extcon/extcon%d/name",
+                        NAME_DP_AUDIO, devIndex);
+                if (LOG) {
+                    Slog.v(TAG, "checkDevIndex " + devPath);
+                }
 
-                while (true) {
-                    String devPath = String.format(Locale.US,
-                            "/sys/devices/platform/soc/%s/extcon/extcon%d/name",
-                            NAME_DP_AUDIO, devIndex);
-                    if (LOG) {
-                        Slog.v(TAG, "checkDevIndex " + devPath);
+                File f = new File(devPath);
+                if (!f.exists()) {
+                    Slog.e(TAG, "file " + devPath + " not found");
+                    return;
+                }
+
+                try {
+                    FileReader file = new FileReader(f);
+                    int len = file.read(buffer, 0, 1024);
+                    file.close();
+
+                    String devName = (new String(buffer, 0, len)).trim();
+                    if (devName.startsWith(NAME_DP_AUDIO)) {
+                        mDevIndex = devIndex;
                     }
-
-                    File f = new File(devPath);
-                    if (!f.exists()) {
-                        Slog.e(TAG, "file " + devPath + " not found");
-                        break;
-                    }
-
-                    try {
-                        FileReader file = new FileReader(f);
-                        int len = file.read(buffer, 0, 1024);
-                        file.close();
-
-                        String devName = (new String(buffer, 0, len)).trim();
-                        if (devName.startsWith(NAME_DP_AUDIO) && index == devIndex) {
-                            mDevIndex = devIndex;
-                            break;
-                        } else {
-                            index++;
-                        }
-                    } catch (Exception e) {
-                        Slog.e(TAG, "checkDevIndex exception", e);
-                        break;
-                    }
+                } catch (Exception e) {
+                    Slog.e(TAG, "checkDevIndex exception", e);
                 }
             }
 
