@@ -350,7 +350,7 @@ public class SurfaceUtils {
         String packageName = ActivityThread.currentOpPackageName();
         if (packageName == null || packageName.isEmpty() 
             || packageName.equals("com.google.android.GoogleCamera")) return true;
-        String packageList = SystemProperties.get("persist.camera.privapp.list");
+        String packageList = SystemProperties.get("persist.vendor.camera.privapp.list");
 
         if (packageList.length() > 0) {
             TextUtils.StringSplitter splitter = new TextUtils.SimpleStringSplitter(',');
