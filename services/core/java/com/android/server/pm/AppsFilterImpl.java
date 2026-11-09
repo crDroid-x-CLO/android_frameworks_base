@@ -37,7 +37,6 @@ import static com.android.server.pm.AppsFilterUtils.canQueryAsUpdateOwner;
 import static com.android.server.pm.AppsFilterUtils.canQueryViaComponents;
 import static com.android.server.pm.AppsFilterUtils.canQueryViaPackage;
 import static com.android.server.pm.AppsFilterUtils.canQueryViaUsesLibrary;
-import static com.android.server.pm.ComputerEngine.isMicrogSigned;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
