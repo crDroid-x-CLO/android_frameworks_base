@@ -37,11 +37,6 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 
-import android.app.ActivityThread;
-import android.os.SystemProperties;
-import android.text.TextUtils;
-
-
 /**
  * Various Surface utilities.
  */

@@ -80,7 +80,6 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.util.ArrayMap;
 import android.util.ArraySet;
-import android.util.Log;
 import android.util.Pair;
 import android.util.Size;
 import android.view.Display;

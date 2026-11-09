@@ -137,7 +137,6 @@ import com.android.server.pm.UserManagerInternal;
 import com.android.server.policy.GlobalActionsProvider;
 import com.android.server.power.ShutdownCheckPoints;
 import com.android.server.power.ShutdownThread;
-import com.android.server.UiThread;
 import com.android.server.wm.ActivityTaskManagerInternal;
 
 import java.io.FileDescriptor;

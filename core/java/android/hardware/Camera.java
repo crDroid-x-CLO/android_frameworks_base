@@ -58,9 +58,6 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
-// QTI_BEGIN: 2018-03-10: Camera: Force HAL1 for predefined package list.
-import android.os.SystemProperties;
-// QTI_END: 2018-03-10: Camera: Force HAL1 for predefined package list.
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;

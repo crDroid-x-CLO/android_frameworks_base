@@ -64,10 +64,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 // QTI_BEGIN: 2018-03-21: Bluetooth: DUN: Add framework changes to support DUN
 import android.os.SystemProperties;
 // QTI_END: 2018-03-21: Bluetooth: DUN: Add framework changes to support DUN
-// QTI_BEGIN: 2021-02-01: Bluetooth: Add BC profile entry
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-// QTI_END: 2021-02-01: Bluetooth: Add BC profile entry
 import java.lang.reflect.Method;
 
 
