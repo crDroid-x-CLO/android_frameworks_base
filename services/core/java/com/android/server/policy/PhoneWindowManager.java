@@ -3480,15 +3480,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (mHardwareKeysDisable) {
             activeHardwareKeys = 0;
         }
-        mAssistPressAction = Action.SEARCH;
-        mAssistLongPressAction = Action.VOICE_SEARCH;
-        mAppSwitchPressAction = Action.APP_SWITCH;
-        mAppSwitchLongPressAction = Action.fromIntSafe(res.getInteger(
-                org.lineageos.platform.internal.R.integer.config_longPressOnAppSwitchBehavior));
-        mEdgeLongSwipeAction = Action.NOTHING;
 
         final boolean hasMenu = (activeHardwareKeys & KEY_MASK_MENU) != 0;
         final boolean hasAssist = (activeHardwareKeys & KEY_MASK_ASSIST) != 0;
+        final boolean hasAppSwitch = (activeHardwareKeys & KEY_MASK_APP_SWITCH) != 0;
 
         final ContentResolver resolver = mContext.getContentResolver();
         final Resources res = mContext.getResources();
@@ -3544,9 +3539,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     LineageSettings.System.KEY_ASSIST_LONG_PRESS_ACTION,
                     mAssistLongPressAction);
         }
-        mAppSwitchPressAction = Action.fromSettings(resolver,
-                LineageSettings.System.KEY_APP_SWITCH_ACTION,
-                mAppSwitchPressAction);
+        if (hasAppSwitch) {
+            mAppSwitchPressAction = Action.fromSettings(resolver,
+                    LineageSettings.System.KEY_APP_SWITCH_ACTION,
+                    mAppSwitchPressAction);
+        }
         mAppSwitchLongPressAction = Action.fromSettings(resolver,
                 LineageSettings.System.KEY_APP_SWITCH_LONG_PRESS_ACTION,
                 mAppSwitchLongPressAction);
