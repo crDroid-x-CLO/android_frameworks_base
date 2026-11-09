@@ -26,6 +26,7 @@ import com.android.systemui.SysuiTestCase
 import com.android.systemui.broadcast.BroadcastSender
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.util.concurrency.FakeExecutor
+import com.android.systemui.util.concurrency.mockExecutorHandler
 import com.android.systemui.util.mockito.argumentCaptor
 import com.android.systemui.util.mockito.capture
 import com.android.systemui.util.settings.FakeSettings
@@ -77,8 +78,10 @@ class FlashlightControllerImplTest : SysuiTestCase() {
                 .thenReturn(true)
 
         controller = FlashlightControllerImpl(
+                context,
                 dumpManager,
                 cameraManager,
+                mockExecutorHandler(backgroundExecutor),
                 backgroundExecutor,
                 fakeSettings,
                 broadcastSender,
