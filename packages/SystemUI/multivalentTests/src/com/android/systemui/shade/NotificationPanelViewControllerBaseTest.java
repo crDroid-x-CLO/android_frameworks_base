@@ -154,7 +154,9 @@ import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController;
 import com.android.systemui.statusbar.policy.data.repository.FakeUserSetupRepository;
+import com.android.systemui.tuner.TunerService;
 import com.android.systemui.unfold.SysUIUnfoldComponent;
+import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
 import com.android.systemui.user.domain.interactor.UserSwitcherInteractor;
 import com.android.systemui.util.kotlin.JavaAdapter;
 import com.android.systemui.util.time.FakeSystemClock;
@@ -238,6 +240,7 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
     @Mock protected FragmentHostManager mFragmentHostManager;
     @Mock protected IStatusBarService mStatusBarService;
     @Mock protected EmergencyButtonController.Factory mEmergencyButtonControllerFactory;
+    @Mock protected TunerService mTunerService;
     @Mock protected NotificationRemoteInputManager mNotificationRemoteInputManager;
     @Mock protected ScreenRecordUxController mScreenRecordUxController;
     @Mock protected LockscreenGestureLogger mLockscreenGestureLogger;
@@ -514,7 +517,7 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
         when(longPressHandlingViewRes.getString(anyInt())).thenReturn("");
 
         mNotificationPanelViewController = new NotificationPanelViewController(
-                mView,
+                mView, mMainHandler,
                 coordinator, expansionHandler, mDynamicPrivacyController, mKeyguardBypassController,
                 mFalsingManager, new FalsingCollectorFake(),
                 mKeyguardStateController,
@@ -544,6 +547,7 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
                 mQsController,
                 mFragmentService,
                 mStatusBarService,
+                mContext.getContentResolver(),
                 mShadeHeaderController,
                 mScreenOffAnimationController,
                 mLockscreenGestureLogger,
@@ -579,6 +583,7 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
                 new BlurConfig(0f, 0f),
                 () -> mKosmos.getFakeShadeDisplaysRepository(),
                 mWindowRootViewBlurInteractor,
+                mTunerService,
                 mContext);
         mNotificationPanelViewController.initDependencies(
                 mCentralSurfaces,
@@ -655,7 +660,9 @@ public class NotificationPanelViewControllerBaseTest extends SysuiTestCase {
                 new ResourcesSplitShadeStateController(),
                 () -> mKosmos.getCommunalTransitionViewModel(),
                 () -> mLargeScreenHeaderHelper,
-                mWindowManagerProvider
+                mWindowManagerProvider,
+                mock(SelectedUserInteractor.class),
+                mTunerService
         );
     }
 

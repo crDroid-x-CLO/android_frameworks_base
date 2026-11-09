@@ -77,6 +77,7 @@ import com.android.systemui.statusbar.policy.CastController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController;
 import com.android.systemui.statusbar.policy.data.repository.FakeUserSetupRepository;
+import com.android.systemui.tuner.TunerService;
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
 import com.android.systemui.user.domain.interactor.UserSwitcherInteractor;
 import com.android.systemui.utils.windowmanager.WindowManagerProvider;
@@ -273,7 +274,9 @@ public class QuickSettingsControllerImplBaseTest extends SysuiTestCase {
                 splitShadeStateController,
                 () -> mKosmos.getCommunalTransitionViewModel(),
                 () -> mLargeScreenHeaderHelper,
-                mWindowManagerProvider
+                mWindowManagerProvider,
+                mSelectedUserInteractor,
+                mock(TunerService.class)
         );
         mQsController.init();
 
