@@ -167,6 +167,7 @@ import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shared.system.TaskStackChangeListener;
 import com.android.systemui.shared.system.TaskStackChangeListeners;
 import com.android.systemui.statusbar.StatusBarState;
+import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.policy.DevicePostureController;
 import com.android.systemui.telephony.TelephonyListenerManager;
@@ -376,6 +377,8 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
     private KeyguardServiceShowLockscreenInteractor mKeyguardServiceShowLockscreenInteractor;
     @Mock
     private DeviceUnlockedInteractor mDeviceUnlockedInteractor;
+    @Mock
+    private DozeParameters mDozeParameters;
     @Captor
     private ArgumentCaptor<FaceAuthenticationListener> mFaceAuthenticationListener;
 
@@ -2941,7 +2944,8 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
                     () -> mSceneInteractor,
                     () -> mCommunalSceneInteractor,
                     () -> mKeyguardServiceShowLockscreenInteractor,
-                    () -> mDeviceUnlockedInteractor);
+                    () -> mDeviceUnlockedInteractor,
+                    () -> mDozeParameters);
             setAlternateBouncerVisibility(false);
             setPrimaryBouncerVisibility(false);
             setStrongAuthTracker(KeyguardUpdateMonitorTest.this.mStrongAuthTracker);

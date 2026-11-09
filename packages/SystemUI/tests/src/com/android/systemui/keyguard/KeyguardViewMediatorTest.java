@@ -30,8 +30,6 @@ import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STR
 import static com.android.systemui.Flags.FLAG_ANIMATION_LIBRARY_SHELL_MIGRATION;
 import static com.android.systemui.Flags.FLAG_KEYGUARD_WM_STATE_REFACTOR;
 import static com.android.systemui.Flags.FLAG_SIM_PIN_BOUNCER_RESET;
-import static com.android.systemui.keyguard.KeyguardViewMediator.DELAYED_KEYGUARD_ACTION;
-import static com.android.systemui.keyguard.KeyguardViewMediator.KEYGUARD_LOCK_AFTER_DELAY_DEFAULT;
 import static com.android.systemui.keyguard.KeyguardViewMediator.REBOOT_MAINLINE_UPDATE;
 import static com.android.systemui.keyguard.KeyguardViewMediator.SYS_BOOT_REASON_PROP;
 
