@@ -298,7 +298,7 @@ public class Camera {
         if (packageName == null)
             return true;
         List<String> packageList = Arrays.asList(
-                SystemProperties.get("vendor.camera.aux.packagelist", packageName).split(","));
+                SystemProperties.get("vendor.camera.aux.packagelist", "").split(","));
         List<String> packageExcludelist = Arrays.asList(
                 SystemProperties.get("vendor.camera.aux.packageexcludelist", "").split(","));
 
