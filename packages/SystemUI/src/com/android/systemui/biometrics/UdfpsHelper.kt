@@ -208,7 +208,6 @@ class UdfpsHelper(
                 view.isVisible = it
                 if (view.isVisible) {
                     brightnessToAlpha()
-                    alphaAnimator.cancel()
                     alphaAnimator.start()
                 }
             }
