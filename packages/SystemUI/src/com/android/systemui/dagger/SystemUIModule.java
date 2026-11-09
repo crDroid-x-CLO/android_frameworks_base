@@ -85,7 +85,6 @@ import com.android.systemui.inputmethod.InputMethodModule;
 import com.android.systemui.keyboard.KeyboardModule;
 import com.android.systemui.keyevent.data.repository.KeyEventRepositoryModule;
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardDataQuickAffordanceModule;
-import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor;
 import com.android.systemui.keyguard.shared.model.KeyguardSection;
 import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAffordancesMetricsLogger;
 import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAffordancesMetricsLoggerImpl;
@@ -199,7 +198,6 @@ import com.android.systemui.wmshell.BubblesManager;
 import com.android.wm.shell.bubbles.Bubbles;
 
 import com.google.android.systemui.keyguard.data.repository.AmbientIndicationRepository;
-import com.google.android.systemui.keyguard.domain.interactor.AmbientIndicationInteractor;
 import com.google.android.systemui.keyguard.ui.sections.DefaultAmbientIndicationAreaSection;
 import com.google.android.systemui.smartspace.BcSmartspaceDataProvider;
 import com.google.android.systemui.smartspace.DateSmartspaceDataProvider;
@@ -548,14 +546,6 @@ public abstract class SystemUIModule {
     @SysUISingleton
     static AmbientIndicationRepository provideAmbientIndicationRepository() {
         return new AmbientIndicationRepository();
-    }
-
-    @Provides
-    @SysUISingleton
-    static AmbientIndicationInteractor provideAmbientIndicationInteractor(
-            AmbientIndicationRepository repository,
-            KeyguardInteractor keyguardInteractor) {
-        return new AmbientIndicationInteractor(repository, keyguardInteractor);
     }
 
     @Binds
