@@ -1272,7 +1272,7 @@ static const JNINativeMethod camMethods[] = {
         {"native_setHistogramMode", "(Z)V", (void *)android_hardware_Camera_setHistogramMode},
         {"native_setMetadataCb", "(Z)V", (void *)android_hardware_Camera_setMetadataCb},
         {"native_sendHistogramData", "()V", (void *)android_hardware_Camera_sendHistogramData},
-        {"native_setLongshot", "(Z)V", (void *)android_hardware_Camera_takePicture},
+        {"native_setLongshot", "(Z)V", (void *)android_hardware_Camera_setLongshot},
         {"native_setParameters", "(Ljava/lang/String;)V",
          (void *)android_hardware_Camera_setParameters},
         {"native_getParameters", "()Ljava/lang/String;",
